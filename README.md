@@ -1,4 +1,4 @@
-# Đơn Hàng Mini
+# Đơn Hàng Nhà Cừu
 
 Web app quản lý đơn hàng cho người bán online qua Facebook. Ưu tiên dùng trên điện thoại, vẫn dùng tốt trên máy tính. Dữ liệu lưu trên **Google Sheets** (private), đọc/ghi qua backend nên credentials không bao giờ xuống trình duyệt.
 

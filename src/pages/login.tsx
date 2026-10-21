@@ -27,7 +27,7 @@ export function LoginPage() {
     <div className="flex min-h-dvh items-center justify-center px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold tracking-tight">Đơn Hàng Mini</h1>
+          <h1 className="text-2xl font-bold tracking-tight">Đơn Hàng Nhà Cừu</h1>
           <p className="mt-1 text-sm text-muted-foreground">Đăng nhập để quản lý đơn hàng</p>
         </div>
         <Card>

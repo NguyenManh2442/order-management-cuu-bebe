@@ -31,7 +31,7 @@ export function AppLayout() {
     <div className="min-h-dvh md:pl-60">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-60 flex-col border-r bg-card md:flex">
         <div className="px-5 py-5">
-          <div className="text-lg font-bold tracking-tight">Đơn Hàng Mini</div>
+          <div className="text-lg font-bold tracking-tight">Đơn Hàng Nhà Cừu</div>
           <div className="text-xs text-muted-foreground">Quản lý đơn bán online</div>
         </div>
         <div className="px-3">
