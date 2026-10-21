@@ -169,7 +169,13 @@ export function GhnSettingsForm({ view, onSaved }: { view: GhnSettingsView; onSa
           Đang dùng <b>GHN giả lập</b> (chế độ demo). Lưu thiết lập bên dưới để kết nối GHN thật.
         </p>
       )}
-      {view.source === 'env' && (
+      {view.read_only && (
+        <p className="mb-4 flex gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <TriangleAlert className="mt-0.5 size-4 shrink-0" />
+          {view.read_only}
+        </p>
+      )}
+      {view.source === 'env' && !view.read_only && (
         <p className="mb-4 rounded-xl border bg-secondary px-4 py-3 text-sm">
           Đang dùng cấu hình từ file <code>.env</code>. Lưu ở đây sẽ ghi vào file thiết lập trên server và được ưu tiên hơn <code>.env</code>.
         </p>
@@ -423,7 +429,15 @@ export function GhnSettingsForm({ view, onSaved }: { view: GhnSettingsView; onSa
       </div>
 
       <StickyFormBar>
-        <Button type="submit" variant="ghn" size="lg" className="flex-1 md:h-10 md:flex-none md:text-sm" loading={save.isPending}>
+        <Button
+          type="submit"
+          variant="ghn"
+          size="lg"
+          className="flex-1 md:h-10 md:flex-none md:text-sm"
+          loading={save.isPending}
+          disabled={!!view.read_only}
+          title={view.read_only || undefined}
+        >
           <Save /> Lưu thiết lập
         </Button>
       </StickyFormBar>

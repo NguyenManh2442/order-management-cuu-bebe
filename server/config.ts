@@ -6,9 +6,11 @@ import { normalizeSize } from '../shared/phone'
 
 if (existsSync('.env')) process.loadEnvFile('.env')
 
+/** Cấu hình sai: ném lỗi để nơi khởi động quyết định (máy chủ thường thì thoát, Vercel thì trả lỗi rõ ràng). */
+export class ConfigError extends Error {}
+
 function fail(message: string): never {
-  console.error(`[config] ${message}`)
-  process.exit(1)
+  throw new ConfigError(message)
 }
 
 const env = process.env
@@ -129,6 +131,10 @@ export const config = {
     settingsFile: env.GHN_SETTINGS_FILE?.trim() || './secrets/ghn-settings.json',
     /** Chưa thiết lập GHN mà đang chạy demo thì dùng GHN giả lập. */
     demoFallback: dataSource === 'demo',
+    /** Vercel: ổ đĩa của serverless function không lưu lâu dài → màn thiết lập chỉ xem, cấu hình bằng biến môi trường. */
+    readOnlyReason: env.VERCEL
+      ? 'Đang chạy trên Vercel: không lưu được thiết lập trên server. Khai báo GHN_TOKEN, GHN_SHOP_ID, GHN_ENV… trong Vercel → Settings → Environment Variables rồi Redeploy.'
+      : '',
   },
 }
 

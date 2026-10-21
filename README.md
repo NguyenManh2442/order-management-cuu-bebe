@@ -179,6 +179,26 @@ Một tiến trình Node phục vụ cả API (`/api`) lẫn giao diện, ở c�
 - Chỉ chạy **1 instance** (xem phần chống ghi đè).
 - Sau reverse proxy (nginx…), server đã bật `trust proxy` cho 1 lớp proxy.
 
+### Deploy lên Vercel
+
+Repo đã có sẵn `vercel.json` + `npm run vercel-build` (Build Output API): giao diện là file tĩnh, toàn bộ `/api/*` chạy trong một serverless function (Express gói thành 1 file). Không cần chỉnh gì trong màn hình Build của Vercel: Framework Preset để **Other**, giữ build command mặc định từ `vercel.json`.
+
+Khai báo biến môi trường ở **Vercel → Project → Settings → Environment Variables** (rồi **Redeploy**). Vercel không có file `.env` hay thư mục `secrets/`:
+
+| Biến | Giá trị |
+|---|---|
+| `DATA_SOURCE` | `sheets` |
+| `SESSION_SECRET` | chuỗi ngẫu nhiên ≥ 32 ký tự (`openssl rand -base64 48`) |
+| `APP_USERS` | như trong `.env` (`ten:scrypt$...`) |
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | ID spreadsheet |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` | trường `client_email` trong file JSON service account |
+| `GOOGLE_PRIVATE_KEY` | trường `private_key` (dán nguyên, giữ các `\n`) |
+| `GHN_TOKEN`, `GHN_SHOP_ID`, `GHN_ENV`, `GHN_WEBHOOK_SECRET`… | nếu dùng GHN (xem `.env.example`) |
+
+Thiếu/sai biến nào, màn hình đăng nhập sẽ báo "Cấu hình server trên Vercel chưa đúng: …". Trên Vercel, màn **Thiết lập GHN** chỉ để xem (serverless không lưu được file) — cấu hình GHN bằng biến môi trường. Webhook GHN: `https://<tên-miền-vercel>/api/ghn/webhook`.
+
+Giới hạn: Vercel có thể chạy nhiều bản function cùng lúc, nên khóa ghi trong bộ nhớ không còn tuyệt đối — với vài người dùng đồng thời thì ổn; nếu nhiều người cùng tạo đơn liên tục, nên chạy 1 máy chủ Node (VPS/Render/Railway) như hướng dẫn ở trên.
+
 Cài app ra màn hình chính: Android Chrome → menu ⋮ → **Thêm vào màn hình chính**; iPhone Safari → **Chia sẻ → Thêm vào MH chính**.
 
 ## Lệnh

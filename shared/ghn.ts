@@ -193,6 +193,8 @@ export interface GhnSettingsView {
   defaults: GhnDefaults
   /** Chế độ demo: chưa thiết lập thì dùng GHN giả lập. */
   demo_fallback: boolean
+  /** Khác '' = server không lưu được thiết lập (ví dụ chạy trên Vercel), kèm lý do và cách cấu hình. */
+  read_only: string
 }
 
 export interface GhnShop {

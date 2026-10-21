@@ -5,3 +5,4 @@ dist-server
 *.local
 secrets/
 *service-account*.json
+.vercel

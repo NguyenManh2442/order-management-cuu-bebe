@@ -13,7 +13,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "hash-password": "tsx server/scripts/hash-password.ts",
-    "init-sheets": "tsx server/scripts/init-sheets.ts"
+    "init-sheets": "tsx server/scripts/init-sheets.ts",
+    "vercel-build": "node server/scripts/vercel-build.mjs"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

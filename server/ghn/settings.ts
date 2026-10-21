@@ -70,6 +70,8 @@ export class GhnRuntime {
       file: string
       fromEnv: GhnSettings | null
       demoFallback: boolean
+      /** Khác '' = không cho lưu thiết lập (ví dụ Vercel), kèm hướng dẫn. */
+      readOnlyReason?: string
       /** Tạo client GHN thật — thay được trong test. */
       createClient?: (env: GhnEnv, token: string, shopId: string) => HttpGhnClient
     },
@@ -128,6 +130,7 @@ export class GhnRuntime {
       sender: s?.sender ?? null,
       defaults: s?.defaults ?? DEFAULT_GHN_DEFAULTS,
       demo_fallback: this.opts.demoFallback,
+      read_only: this.opts.readOnlyReason ?? '',
     }
   }
 
@@ -149,6 +152,7 @@ export class GhnRuntime {
   }
 
   async save(input: GhnSettingsInput): Promise<GhnSettingsView> {
+    if (this.opts.readOnlyReason) throw new AppError(400, this.opts.readOnlyReason)
     const data = ghnSettingsInputSchema.parse(input)
     const token = this.resolveToken(data.env, data.token)
     const probe = this.newClient(data.env, token, data.shop_id)
