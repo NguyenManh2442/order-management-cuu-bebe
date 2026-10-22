@@ -51,6 +51,8 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
         const next = new URLSearchParams(prev)
         if (value) next.set(key, value)
         else next.delete(key)
+        // Đổi bộ lọc thì về trang đầu.
+        next.delete('page')
         return next
       },
       { replace: true },
@@ -60,7 +62,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        for (const k of ['q', 'status', 'from', 'to', 'group', 'size']) next.delete(k)
+        for (const k of ['q', 'status', 'from', 'to', 'group', 'size', 'page']) next.delete(k)
         return next
       },
       { replace: true },

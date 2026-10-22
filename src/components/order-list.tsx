@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { Link } from 'react-router'
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { useEffect, useRef } from 'react'
+import { Link, useSearchParams } from 'react-router'
 import type { OrderView } from '@shared/types'
 import { OPEN_ORDER_STATUSES, amountDue } from '@shared/stats'
 import { Button } from '@/components/ui/button'
@@ -11,7 +12,7 @@ import { GhnListAction } from './ghn-shipment'
 import { sizeTone } from './stats'
 import { StatusSelect } from './status'
 
-const PAGE = 50
+const PAGE = 20
 
 function ItemsText({ order }: { order: OrderView }) {
   if (!order.items.length) return <span className="text-muted-foreground">—</span>
@@ -131,87 +132,136 @@ function OrderTable({
                 />
               </th>
             )}
-            <th>Mã đơn</th>
+            <th>Đơn</th>
             <th>Khách hàng</th>
-            <th>Số điện thoại</th>
-            <th className="hidden xl:table-cell">Địa chỉ</th>
-            {showGroup && <th>Nhóm</th>}
             <th>Size × SL</th>
-            <th className="hidden text-right xl:table-cell">Đơn giá</th>
             <th className="text-right">Thành tiền</th>
             <th>Trạng thái</th>
             <th>Giao hàng</th>
-            <th className="hidden xl:table-cell">Ghi chú</th>
-            <th>Ngày tạo</th>
+            <th className="hidden 2xl:table-cell">Ghi chú</th>
           </tr>
         </thead>
         <tbody>
-          {orders.map((o) => {
-            const prices = [...new Set(o.items.map((i) => i.unit_price))]
-            return (
-              <tr
-                key={o.id}
-                className={cn(
-                  'relative border-b last:border-0 hover:bg-secondary/40 [&>td]:px-3 [&>td]:py-2.5',
-                  selection?.isSelected(o.id) && 'bg-primary/5',
-                )}
-              >
-                {selection && (
-                  <td>
-                    <SelectCheckbox
-                      checked={selection.isSelected(o.id)}
-                      onChange={() => selection.toggle(o.id)}
-                      label={`Chọn đơn ${o.order_code}`}
-                    />
-                  </td>
-                )}
-                <td className="font-mono text-xs font-medium whitespace-nowrap">
-                  <Link to={`/orders/${o.id}`} className="after:absolute after:inset-0 hover:underline">
-                    {o.order_code}
-                  </Link>
+          {orders.map((o) => (
+            <tr
+              key={o.id}
+              className={cn(
+                'relative border-b align-top last:border-0 hover:bg-secondary/40 [&>td]:px-3 [&>td]:py-2.5',
+                selection?.isSelected(o.id) && 'bg-primary/5',
+              )}
+            >
+              {selection && (
+                <td>
+                  <SelectCheckbox
+                    checked={selection.isSelected(o.id)}
+                    onChange={() => selection.toggle(o.id)}
+                    label={`Chọn đơn ${o.order_code}`}
+                  />
                 </td>
-                <td className="max-w-44">
-                  <div className="truncate font-medium">{o.customer.name}</div>
-                  <CustomerRiskBadge history={o.customer_history} className="relative z-10 mt-0.5" />
-                  <FacebookLink url={o.customer.facebook_url} className="text-xs" />
-                </td>
-                <td className="whitespace-nowrap">
+              )}
+              <td className="whitespace-nowrap">
+                <Link to={`/orders/${o.id}`} className="font-mono text-xs font-medium after:absolute after:inset-0 hover:underline">
+                  {o.order_code}
+                </Link>
+                <div className="text-xs text-muted-foreground">{formatDateTime(o.created_at)}</div>
+                {showGroup && <div className="max-w-36 truncate text-xs text-muted-foreground">{o.group_name}</div>}
+              </td>
+              <td className="max-w-56">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-medium" title={o.customer.name}>{o.customer.name}</span>
+                  <CustomerRiskBadge history={o.customer_history} className="relative z-10 shrink-0" />
+                </div>
+                <div className="flex flex-wrap items-center gap-x-3 text-xs">
                   <PhoneLink phone={o.customer.phone} />
-                </td>
-                <td className="hidden max-w-56 xl:table-cell">
-                  <span className="line-clamp-2 text-muted-foreground">{o.customer.address}</span>
-                </td>
-                {showGroup && <td className="max-w-40 truncate">{o.group_name}</td>}
-                <td>
-                  <ItemsText order={o} />
-                </td>
-                <td className="hidden text-right whitespace-nowrap tabular-nums xl:table-cell">
-                  {prices.length === 1 ? formatVND(prices[0]) : prices.length ? 'Nhiều giá' : ''}
-                </td>
-                <td className="text-right font-semibold whitespace-nowrap tabular-nums">
-                  {formatVND(o.total_amount)}
-                  <PaidNote order={o} />
-                </td>
-                <td>
-                  <StatusSelect order={o} className="relative z-10" />
-                </td>
-                <td className="whitespace-nowrap">
-                  <GhnListAction order={o} compact />
-                </td>
-                <td className="hidden max-w-48 xl:table-cell">
-                  <span className="line-clamp-2 text-muted-foreground">{o.note}</span>
-                </td>
-                <td className="text-xs whitespace-nowrap text-muted-foreground">{formatDateTime(o.created_at)}</td>
-              </tr>
-            )
-          })}
+                  <FacebookLink url={o.customer.facebook_url} />
+                </div>
+                {o.customer.address && <div className="truncate text-xs text-muted-foreground">{o.customer.address}</div>}
+              </td>
+              <td>
+                <ItemsText order={o} />
+              </td>
+              <td className="text-right font-semibold whitespace-nowrap tabular-nums">
+                {formatVND(o.total_amount)}
+                <PaidNote order={o} />
+              </td>
+              <td>
+                <StatusSelect order={o} className="relative z-10" />
+              </td>
+              <td className="whitespace-nowrap">
+                <GhnListAction order={o} compact />
+              </td>
+              <td className="hidden max-w-48 2xl:table-cell">
+                <span className="line-clamp-2 text-muted-foreground">{o.note}</span>
+              </td>
+            </tr>
+          ))}
         </tbody>
       </table>
     </div>
   )
 }
 
-/** Card trên điện thoại, bảng trên desktop. Hiện dần từng trang để danh sách dài vẫn mượt. */
+/** Trang hiện tại lưu trên URL (?page=) để mở đơn rồi quay lại vẫn đúng trang. */
+function usePage(total: number) {
+  const [params, setParams] = useSearchParams()
+  const pageCount = Math.max(1, Math.ceil(total / PAGE))
+  const raw = Number(params.get('page'))
+  // Lọc bớt làm số trang giảm thì về trang cuối còn lại.
+  const page = Number.isInteger(raw) && raw > 1 ? Math.min(raw, pageCount) : 1
+  const setPage = (p: number) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (p > 1) next.set('page', String(p))
+        else next.delete('page')
+        return next
+      },
+      { replace: true },
+    )
+  return { page, pageCount, setPage }
+}
+
+function Pagination({
+  page,
+  pageCount,
+  total,
+  onChange,
+}: {
+  page: number
+  pageCount: number
+  total: number
+  onChange: (page: number) => void
+}) {
+  if (pageCount <= 1) return null
+  const from = (page - 1) * PAGE + 1
+  const to = Math.min(total, page * PAGE)
+  return (
+    <nav className="flex flex-wrap items-center justify-between gap-2" aria-label="Phân trang">
+      <span className="text-sm text-muted-foreground tabular-nums">
+        {formatNumber(from)}–{formatNumber(to)} / {formatNumber(total)} đơn
+      </span>
+      <div className="flex items-center gap-1">
+        <Button variant="outline" size="icon" disabled={page === 1} onClick={() => onChange(1)} aria-label="Trang đầu">
+          <ChevronsLeft />
+        </Button>
+        <Button variant="outline" size="icon" disabled={page === 1} onClick={() => onChange(page - 1)} aria-label="Trang trước">
+          <ChevronLeft />
+        </Button>
+        <span className="min-w-20 text-center text-sm font-medium tabular-nums">
+          Trang {page}/{pageCount}
+        </span>
+        <Button variant="outline" size="icon" disabled={page === pageCount} onClick={() => onChange(page + 1)} aria-label="Trang sau">
+          <ChevronRight />
+        </Button>
+        <Button variant="outline" size="icon" disabled={page === pageCount} onClick={() => onChange(pageCount)} aria-label="Trang cuối">
+          <ChevronsRight />
+        </Button>
+      </div>
+    </nav>
+  )
+}
+
+/** Card trên điện thoại, bảng trên desktop; chia trang để danh sách dài vẫn mượt. */
 export function OrderList({
   orders,
   showGroup,
@@ -224,12 +274,26 @@ export function OrderList({
   selection?: OrderSelection
   className?: string
 }) {
-  const [limit, setLimit] = useState(PAGE)
-  const visible = orders.slice(0, limit)
+  const { page, pageCount, setPage } = usePage(orders.length)
+  const top = useRef<HTMLDivElement>(null)
+  const scrollPending = useRef(false)
+  const visible = orders.slice((page - 1) * PAGE, page * PAGE)
+  const goTo = (p: number) => {
+    scrollPending.current = true
+    setPage(p)
+  }
+  // Cuộn sau khi trang mới đã vẽ xong (cuộn ngay lúc bấm thì bị lần vẽ lại làm mất).
+  useEffect(() => {
+    if (!scrollPending.current) return
+    scrollPending.current = false
+    const el = top.current
+    if (el && el.getBoundingClientRect().top < 0) el.scrollIntoView({ block: 'start' })
+  }, [page])
   return (
-    <div className={cn('grid min-w-0 gap-3', className)}>
+    // scroll-mt: chừa chỗ cho thanh tiêu đề dính trên điện thoại.
+    <div ref={top} className={cn('grid min-w-0 scroll-mt-20 gap-3 md:scroll-mt-4', className)}>
       {selection && (
-        <div className="-my-1 flex items-center md:hidden">
+        <div className="-my-1 flex items-center xl:hidden">
           <Button
             variant="ghost"
             size="sm"
@@ -242,19 +306,15 @@ export function OrderList({
           </Button>
         </div>
       )}
-      <ul className="grid min-w-0 gap-3 md:hidden">
+      <ul className="grid min-w-0 gap-3 md:grid-cols-2 xl:hidden">
         {visible.map((o) => (
           <OrderCard key={o.id} order={o} showGroup={showGroup} selection={selection} />
         ))}
       </ul>
-      <div className="hidden min-w-0 md:block">
+      <div className="hidden min-w-0 xl:block">
         <OrderTable orders={visible} showGroup={showGroup} selection={selection} />
       </div>
-      {orders.length > limit && (
-        <Button variant="outline" onClick={() => setLimit((l) => l + PAGE)}>
-          Xem thêm ({orders.length - limit} đơn)
-        </Button>
-      )}
+      <Pagination page={page} pageCount={pageCount} total={orders.length} onChange={goTo} />
     </div>
   )
 }
