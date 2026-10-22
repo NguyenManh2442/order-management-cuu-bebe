@@ -82,19 +82,39 @@ export interface DashboardStats {
   by_status: Record<OrderStatus, number>
   /** Doanh thu từ đơn đã giao. */
   revenue: number
+  /** Tiền còn phải thu của các đơn đang xử lý (chưa giao, chưa hủy/hoàn). */
+  outstanding: number
 }
 
-export function computeDashboardStats(orders: Pick<Order, 'id' | 'status' | 'total_amount'>[]): DashboardStats {
+/** Đơn còn đang xử lý: tiền chưa về tay shop. */
+export const OPEN_ORDER_STATUSES: OrderStatus[] = ['pending', 'confirmed', 'packing', 'shipping']
+
+/** Số tiền khách còn phải trả. Dữ liệu cũ chưa có cột paid_amount được coi là 0. */
+export function amountDue(o: Pick<Order, 'total_amount'> & { paid_amount?: number }): number {
+  // Số âm do sửa tay trên Sheets coi như chưa trả.
+  return Math.max(0, o.total_amount - Math.max(0, o.paid_amount || 0))
+}
+
+/** Còn phải thu theo trạng thái: đơn đã giao / hủy / hoàn không còn gì để thu. */
+export function amountDueNow(o: Pick<Order, 'total_amount' | 'status'> & { paid_amount?: number }): number {
+  return OPEN_ORDER_STATUSES.includes(o.status) ? amountDue(o) : 0
+}
+
+export function computeDashboardStats(
+  orders: (Pick<Order, 'id' | 'status' | 'total_amount'> & { paid_amount?: number })[],
+): DashboardStats {
   const by_status = Object.fromEntries(ORDER_STATUSES.map((s) => [s, 0])) as Record<OrderStatus, number>
   const seen = new Set<string>()
   let revenue = 0
+  let outstanding = 0
   for (const o of orders) {
     if (seen.has(o.id)) continue
     seen.add(o.id)
     by_status[o.status]++
     if (o.status === 'delivered') revenue += o.total_amount
+    if (OPEN_ORDER_STATUSES.includes(o.status)) outstanding += amountDue(o)
   }
-  return { total: seen.size, by_status, revenue }
+  return { total: seen.size, by_status, revenue, outstanding }
 }
 
 /** "M x2, L x1" */

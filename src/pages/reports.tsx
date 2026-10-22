@@ -1,7 +1,8 @@
-import { ClipboardList, LogOut, Wallet } from 'lucide-react'
+import { ClipboardList, HandCoins, LogOut, Wallet } from 'lucide-react'
 import { Link } from 'react-router'
 import { ORDER_STATUS_LABELS, type OrderStatus } from '@shared/constants'
 import { computeDashboardStats } from '@shared/stats'
+import { DeliveryFailedCard, deliveryFailed } from '@/components/needs-attention'
 import { PageHeader } from '@/components/page-header'
 import { ErrorState, ListSkeleton } from '@/components/states'
 import { STATUS_TONE, SizeSummary, StatCard } from '@/components/stats'
@@ -28,7 +29,10 @@ export function ReportsPage() {
       ) : orders.error ? (
         <ErrorState error={orders.error} onRetry={orders.refetch} />
       ) : (
-        <ReportBody stats={computeDashboardStats(orders.data)} />
+        <>
+          <DeliveryFailedCard orders={deliveryFailed(orders.data)} className="mb-4" />
+          <ReportBody stats={computeDashboardStats(orders.data)} />
+        </>
       )}
 
       <Card className="mt-6">
@@ -93,7 +97,14 @@ function ReportBody({ stats }: { stats: ReturnType<typeof computeDashboardStats>
           icon={Wallet}
           label="Doanh thu (đơn đã giao)"
           value={formatVND(stats.revenue)}
-          className="col-span-1 md:col-span-3"
+          className="col-span-1 md:col-span-2"
+        />
+        <StatCard
+          tone="amber"
+          icon={HandCoins}
+          label="Còn phải thu (đơn đang xử lý)"
+          value={formatVND(stats.outstanding)}
+          className="col-span-2 md:col-span-1"
         />
         {HIGHLIGHT.map((s) => (
           <Link key={s} to={`/orders?status=${s}`} className="block rounded-xl transition-opacity hover:opacity-80">

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { GROUP_STATUSES, MAX_ITEMS_PER_ORDER, ORDER_STATUSES } from './constants'
+import { COST_BASES, COST_CATEGORIES, GROUP_STATUSES, MAX_ITEMS_PER_ORDER, ORDER_STATUSES } from './constants'
 import { GHN_REQUIRED_NOTES } from './ghn'
 import { isValidPhone, isValidUrl } from './phone'
 
@@ -30,22 +30,66 @@ export const orderItemInputSchema = z.object({
   unit_price: money,
 })
 
-export const orderInputSchema = z.object({
-  group_id: z.string().min(1, 'Chọn nhóm đơn hàng'),
-  customer: customerInputSchema,
-  items: z
-    .array(orderItemInputSchema)
-    .min(1, 'Cần ít nhất 1 sản phẩm')
-    .max(MAX_ITEMS_PER_ORDER, `Tối đa ${MAX_ITEMS_PER_ORDER} dòng`),
-  status: z.enum(ORDER_STATUSES),
-  note: z.string().trim().max(1000, 'Tối đa 1000 ký tự'),
-  /** Thời điểm cập nhật mà client đã đọc — để phát hiện người khác sửa trước. */
-  expected_updated_at: z.string().optional(),
-})
+export const orderInputSchema = z
+  .object({
+    group_id: z.string().min(1, 'Chọn nhóm đơn hàng'),
+    customer: customerInputSchema,
+    items: z
+      .array(orderItemInputSchema)
+      .min(1, 'Cần ít nhất 1 sản phẩm')
+      .max(MAX_ITEMS_PER_ORDER, `Tối đa ${MAX_ITEMS_PER_ORDER} dòng`),
+    status: z.enum(ORDER_STATUSES),
+    note: z.string().trim().max(1000, 'Tối đa 1000 ký tự'),
+    /**
+     * Khách đã cọc / chuyển khoản. Không gửi (giao diện bản cũ còn trong cache trình duyệt)
+     * thì server giữ nguyên giá trị đang lưu.
+     */
+    paid_amount: money.optional(),
+    /** Thời điểm cập nhật mà client đã đọc — để phát hiện người khác sửa trước. */
+    expected_updated_at: z.string().optional(),
+  })
+  .superRefine((v, ctx) => {
+    const total = v.items.reduce((s, i) => s + i.quantity * i.unit_price, 0)
+    if ((v.paid_amount ?? 0) > total) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['paid_amount'], message: 'Số tiền đã trả lớn hơn tổng đơn' })
+    }
+  })
 
 export const orderStatusInputSchema = z.object({
   status: z.enum(ORDER_STATUSES),
   expected_updated_at: z.string().optional(),
+})
+
+export const groupCostInputSchema = z.object({
+  category: z.enum(COST_CATEGORIES),
+  name: z.string().trim().min(1, 'Nhập tên khoản chi').max(120, 'Tối đa 120 ký tự'),
+  quantity: z
+    .number({ invalid_type_error: 'Nhập số lượng' })
+    .positive('Số lượng phải lớn hơn 0')
+    .max(1_000_000, 'Số lượng quá lớn')
+    .refine((n) => Math.abs(Math.round(n * 1000) - n * 1000) < 1e-6, 'Tối đa 3 chữ số thập phân'),
+  unit: z.string().trim().max(20, 'Tối đa 20 ký tự'),
+  unit_price: money,
+  basis: z.enum(COST_BASES),
+  note: z.string().trim().max(500, 'Tối đa 500 ký tự'),
+  expected_updated_at: z.string().optional(),
+})
+
+export const bulkOrderStatusInputSchema = z.object({
+  status: z.enum(ORDER_STATUSES),
+  orders: z
+    .array(z.object({ id: z.string().min(1), expected_updated_at: z.string().optional() }))
+    .min(1, 'Chưa chọn đơn nào')
+    .max(200, 'Tối đa 200 đơn mỗi lần'),
+})
+
+export const ghnBulkPrintInputSchema = z.object({
+  order_ids: z.array(z.string().min(1)).min(1, 'Chưa chọn đơn nào').max(100, 'Tối đa 100 nhãn mỗi lần'),
+})
+
+export const publicLinkInputSchema = z.object({
+  /** true = đổi link mới, link cũ hết hiệu lực. */
+  regenerate: z.boolean(),
 })
 
 export const groupInputSchema = z.object({
@@ -174,7 +218,9 @@ export type CustomerInput = z.infer<typeof customerInputSchema>
 export type OrderItemInput = z.infer<typeof orderItemInputSchema>
 export type OrderInput = z.infer<typeof orderInputSchema>
 export type OrderStatusInput = z.infer<typeof orderStatusInputSchema>
+export type BulkOrderStatusInput = z.infer<typeof bulkOrderStatusInputSchema>
 export type GroupInput = z.infer<typeof groupInputSchema>
+export type GroupCostInput = z.infer<typeof groupCostInputSchema>
 export type LoginInput = z.infer<typeof loginInputSchema>
 export type GhnShipmentInput = z.infer<typeof ghnShipmentInputSchema>
 export type GhnDraft = z.infer<typeof ghnDraftSchema>

@@ -1,4 +1,6 @@
 import type { OrderStatus } from './constants'
+import { OPEN_ORDER_STATUSES, amountDue } from './stats'
+import type { Order } from './types'
 
 /**
  * Giao Hàng Nhanh (GHN) — https://developer.ghn.vn
@@ -211,6 +213,16 @@ export const DEFAULT_GHN_DEFAULTS: GhnDefaults = {
   height: 5,
   required_note: 'CHOXEMHANGKHONGTHU',
   payment_type: 2,
+}
+
+/**
+ * Vận đơn đang chạy mà tiền thu hộ trên GHN khác số còn phải thu — xảy ra khi sửa tiền cọc
+ * hoặc sản phẩm sau khi đã gửi GHN (sửa đơn trong app không cập nhật sang GHN).
+ */
+export function codMismatch(
+  o: Pick<Order, 'ghn_order_code' | 'ghn_status' | 'ghn_cod_amount' | 'total_amount' | 'paid_amount' | 'status'>,
+): boolean {
+  return isActiveShipment(o) && OPEN_ORDER_STATUSES.includes(o.status) && o.ghn_cod_amount !== amountDue(o)
 }
 
 export const ghnTrackingUrl = (code: string) => `https://donhang.ghn.vn/?order_code=${encodeURIComponent(code)}`

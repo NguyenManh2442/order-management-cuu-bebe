@@ -4,15 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import {
-  formatGhnAddress,
-  isActiveShipment,
-  parseGhnAddress,
-  type GhnPlace,
-  type GhnPublicConfig,
-} from '@shared/ghn'
-import { ghnDraftSchema, ghnShipmentInputSchema, type GhnShipmentInput } from '@shared/schemas'
-import type { OrderView } from '@shared/types'
+import { formatGhnAddress, isActiveShipment, type GhnPlace } from '@shared/ghn'
+import { ghnShipmentInputSchema, type GhnShipmentInput } from '@shared/schemas'
+import { amountDue } from '@shared/stats'
 import { FormSection, MoneyInput, StickyFormBar, useUnsavedChangesGuard } from '@/components/form-helpers'
 import { GhnSettingsForm } from '@/components/ghn-settings-form'
 import { PageHeader } from '@/components/page-header'
@@ -24,6 +18,7 @@ import { Switch } from '@/components/ui/switch'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Field, Input, Textarea } from '@/components/ui/input'
 import { errorMessage } from '@/lib/api'
+import { readDraft, shipmentDefaults } from '@/lib/ghn-defaults'
 import { PAYMENT_OPTIONS, REQUIRED_NOTE_OPTIONS } from '@/lib/ghn-options'
 import {
   useConfig,
@@ -39,41 +34,6 @@ import {
   useSaveGhnDraft,
 } from '@/lib/queries'
 import { cn, formatDate, formatDateTime, formatVND } from '@/lib/utils'
-
-/** Nháp đã lưu trong đơn (chỉ lấy các trường hợp lệ) + thời điểm lưu. */
-function readDraft(raw: string) {
-  if (!raw) return null
-  try {
-    const value = JSON.parse(raw) as Record<string, unknown>
-    const parsed = ghnDraftSchema.safeParse(value)
-    if (!parsed.success) return null
-    return { values: parsed.data, savedAt: typeof value.saved_at === 'string' ? value.saved_at : '' }
-  } catch {
-    return null
-  }
-}
-
-function defaults(order: OrderView, ghn: GhnPublicConfig): GhnShipmentInput {
-  const saved = parseGhnAddress(order.customer.ghn_address)
-  const quantity = order.items.reduce((s, i) => s + i.quantity, 0)
-  return {
-    to_name: order.customer.name,
-    to_phone: order.customer.phone,
-    is_new_address: saved?.is_new ?? true,
-    province_id: saved?.province_id ?? 0,
-    district_id: saved?.district_id ?? 0,
-    ward_id: saved?.ward_id ?? 0,
-    street: saved?.street ?? order.customer.address,
-    cod_amount: order.total_amount,
-    insurance_value: 0,
-    weight: Math.min(19_999, Math.max(1, quantity) * ghn.default_item_weight),
-    ...ghn.default_dimensions,
-    payment_type_id: ghn.default_payment_type,
-    required_note: ghn.default_required_note,
-    note: '',
-    save_address: true,
-  }
-}
 
 const intValue = (v: string) => {
   const digits = v.replace(/\D/g, '').slice(0, 6)
@@ -118,7 +78,7 @@ export function OrderShipPage() {
   useEffect(() => {
     if (initialized.current || !order.data || !ghn) return
     const draft = readDraft(order.data.ghn_draft)
-    const values = { ...defaults(order.data, ghn), ...draft?.values }
+    const values = { ...shipmentDefaults(order.data, ghn), ...draft?.values }
     form.reset(values)
     guessing.current = !draft && !values.province_id && !!order.data.customer.address
     initialized.current = true
@@ -221,7 +181,7 @@ export function OrderShipPage() {
   const onDiscardDraft = () =>
     saveDraft.mutate(null, {
       onSuccess: () => {
-        if (ghn) form.reset(defaults(o, ghn))
+        if (ghn) form.reset(shipmentDefaults(o, ghn))
         toast.success('Đã bỏ nháp')
       },
       onError: (err) => toast.error(errorMessage(err)),
@@ -421,7 +381,11 @@ export function OrderShipPage() {
                 label="Tiền thu hộ (COD)"
                 htmlFor="cod"
                 error={errors.cod_amount?.message}
-                hint={`Tổng đơn ${formatVND(o.total_amount)}. Nhập 0 nếu khách đã chuyển khoản.`}
+                hint={
+                  o.paid_amount > 0
+                    ? `Tổng đơn ${formatVND(o.total_amount)}, khách đã trả ${formatVND(o.paid_amount)} → còn thu ${formatVND(amountDue(o))}.`
+                    : `Tổng đơn ${formatVND(o.total_amount)}. Nhập 0 nếu khách đã chuyển khoản.`
+                }
               >
                 <Controller
                   control={form.control}

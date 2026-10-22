@@ -81,8 +81,8 @@ export interface GhnClient {
   create(body: GhnOrderPayload): Promise<GhnCreated>
   detail(orderCode: string): Promise<GhnOrderDetail>
   cancel(orderCode: string): Promise<void>
-  /** Link in nhãn vận đơn khổ A5 (hết hạn sau khoảng 30 phút). */
-  printUrl(orderCode: string): Promise<string>
+  /** Link in nhãn vận đơn khổ A5, một hoặc nhiều vận đơn (hết hạn sau khoảng 30 phút). */
+  printUrl(orderCodes: string[]): Promise<string>
 }
 
 interface GhnEnvelope<T> {
@@ -328,8 +328,8 @@ export class HttpGhnClient implements GhnClient {
     if (!r?.result) throw new AppError(400, `GHN không cho hủy vận đơn này${r?.message ? `: ${r.message}` : ''}.`)
   }
 
-  async printUrl(orderCode: string): Promise<string> {
-    const d = await this.call<{ token: string }>('POST', '/shiip/public-api/v2/a5/gen-token', { order_codes: [orderCode] })
+  async printUrl(orderCodes: string[]): Promise<string> {
+    const d = await this.call<{ token: string }>('POST', '/shiip/public-api/v2/a5/gen-token', { order_codes: orderCodes })
     return `${this.baseUrl}/a5/public-api/printA5?token=${encodeURIComponent(d.token)}`
   }
 }
@@ -341,7 +341,8 @@ export class HttpGhnClient implements GhnClient {
 export class FakeGhnClient implements GhnClient {
   readonly env = 'demo'
   private orders = new Map<string, { status: string; updated: string; cod: number }>()
-  private static FLOW = ['ready_to_pick', 'picking', 'picked', 'transporting', 'delivering', 'delivered']
+  // Có bước "giao thất bại" để thử mục "Cần xử lý" (gọi lại cho khách) ở chế độ demo.
+  private static FLOW = ['ready_to_pick', 'picking', 'picked', 'transporting', 'delivering', 'delivery_fail', 'delivered']
 
   private static PROVINCES: GhnPlace[] = [
     { id: 1000001, name: 'Hồ Chí Minh', aliases: ['tp.hồ chí minh', 'hcm', 'ho chi minh', 'sài gòn', 'tphcm'] },
@@ -442,8 +443,8 @@ export class FakeGhnClient implements GhnClient {
     o.updated = new Date().toISOString()
   }
 
-  async printUrl(code: string): Promise<string> {
-    this.get(code)
+  async printUrl(codes: string[]): Promise<string> {
+    codes.forEach((c) => this.get(c))
     throw new AppError(400, 'Chế độ demo (GHN giả lập) không có nhãn vận đơn để in.')
   }
 }

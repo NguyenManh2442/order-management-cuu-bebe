@@ -9,7 +9,12 @@ Web app quản lý đơn hàng cho người bán online qua Facebook. Ưu tiên 
 - **Đơn hàng**: tạo/sửa/hủy/xóa, mã đơn tự sinh `DH yymmdd-001`, một đơn có thể đặt nhiều size, tổng tiền tự tính. Đổi trạng thái nhanh ngay trên danh sách.
 - **Khách hàng**: lưu tự động theo số điện thoại; nhập SĐT khách cũ sẽ tự điền tên/FB/địa chỉ; xem lịch sử đơn của khách.
 - **Tìm kiếm & lọc** theo mã đơn, tên, SĐT, trạng thái, nhóm, khoảng ngày; **xuất CSV** (mở được bằng Excel, giữ số 0 đầu SĐT) theo đúng bộ lọc đang chọn.
-- **Báo cáo**: tổng đơn, số đơn theo trạng thái, doanh thu từ đơn đã giao.
+- **Chi phí & lãi theo nhóm**: nhập nguyên vật liệu, công thợ, chi phí khác (số lượng có thể lẻ, ví dụ 1,2 mét). Mỗi khoản tính **cố định** (50 mét × giá) hoặc **theo mỗi sản phẩm** (1,2 mét/sp × số sản phẩm đã đặt — tự cập nhật khi có đơn mới). Từ trang nhóm bấm **Chi phí & lãi dự kiến** để mở màn hình riêng: tổng chi phí, chi phí/sản phẩm, doanh thu dự kiến (đơn chưa hủy, chưa hoàn), lãi dự kiến và danh sách khoản chi.
+- **Tiền cọc / chuyển khoản**: ghi số tiền khách đã trả trước; app tính **còn phải thu**, form GHN tự điền thu hộ (COD) = phần còn lại.
+- **Cảnh báo khách hay hoàn/hủy đơn**: nhập SĐT khách từng hoàn hàng sẽ hiện cảnh báo (gợi ý thu cọc); nhãn "Từng hoàn N" trong danh sách đơn và khách.
+- **Thao tác hàng loạt**: tick chọn nhiều đơn → đổi trạng thái, gửi GHN (đơn đã có địa chỉ GHN lưu sẵn hoặc nháp), in gộp nhãn GHN.
+- **Báo cáo**: tổng đơn, số đơn theo trạng thái, doanh thu từ đơn đã giao, tiền còn phải thu; mục **Cần gọi khách** liệt kê đơn GHN giao thất bại.
+- **Link tra cứu cho khách**: trong chi tiết đơn tạo link `/t/<mã>` gửi khách tự xem trạng thái, số tiền còn phải trả, mã vận đơn và địa chỉ giao hàng — không cần đăng nhập, chỉ ai có link xem được (kể cả người được khách chuyển tiếp link, nên link lộ thì bấm **Đổi link**), SĐT bị che bớt; đổi link thì link cũ hết hiệu lực.
 - **Giao Hàng Nhanh (GHN)**: từ chi tiết đơn bấm **Tạo đơn GHN**, chọn lại địa chỉ theo danh mục của GHN (Tỉnh/Thành → Phường/Xã, hệ hành chính mới), xem phí trước khi gửi; trạng thái vận đơn tự cập nhật về đơn qua webhook hoặc nút **Đồng bộ GHN**; in nhãn, hủy vận đơn. Xem mục [Giao Hàng Nhanh](#giao-hàng-nhanh-ghn).
 - Card trên điện thoại, bảng trên desktop; nút gọi `tel:` và mở Facebook; cài ra màn hình chính (PWA).
 
@@ -80,7 +85,8 @@ Lệnh này tạo 4 sheet `Customers`, `OrderGroups`, `Orders`, `OrderItems` cù
 |---|---|
 | `Customers` | id, name, phone, facebook_url, address, ghn_address, created_at, updated_at |
 | `OrderGroups` | id, name, description, product_name, default_unit_price, status (`open`/`closed`), created_at, updated_at |
-| `Orders` | id, order_code, group_id, customer_id, items_summary, total_amount, status, note, ghn_order_code, ghn_client_code, ghn_status, ghn_status_at, ghn_fee, ghn_cod_amount, ghn_expected_delivery, ghn_to_address, ghn_draft, created_at, updated_at |
+| `Orders` | id, order_code, group_id, customer_id, items_summary, total_amount, status, note, ghn_order_code, ghn_client_code, ghn_status, ghn_status_at, ghn_fee, ghn_cod_amount, ghn_expected_delivery, ghn_to_address, ghn_draft, paid_amount, public_token, created_at, updated_at |
+| `GroupCosts` | id, group_id, category (`material`/`labor`/`other`), name, quantity, unit, unit_price, basis (`fixed`/`per_item`), note, created_at, updated_at |
 | `OrderItems` | id, order_id, product_name, size, quantity, unit_price, line_total, created_at |
 
 - Một nhóm có nhiều đơn; một khách có nhiều đơn (kể cả ở nhiều nhóm); một đơn có một hoặc nhiều dòng `OrderItems` (mỗi dòng một size).
@@ -89,6 +95,15 @@ Lệnh này tạo 4 sheet `Customers`, `OrderGroups`, `Orders`, `OrderItems` cù
 - `items_summary` (ví dụ `M x2, L x1`) chỉ để đọc nhanh trên Sheets; thống kê luôn tính từ `OrderItems`.
 - Cột được nhận theo **tên ở dòng tiêu đề**, nên có thể đổi thứ tự cột hoặc thêm cột riêng của bạn: app giữ nguyên các cột lạ khi ghi.
 - Nên **xem** trên Sheets nhưng **sửa** qua app. Nếu sửa tay, đừng đổi cột `id`, và nhớ app cache dữ liệu đọc `SHEETS_CACHE_MS` (mặc định 15 giây).
+
+### Nâng cấp khi đã có dữ liệu thật
+
+Bản mới cần 2 cột mới trong sheet `Orders` (`paid_amount`, `public_token`) và sheet mới `GroupCosts` (chi phí nhóm). Cách nâng cấp an toàn:
+
+1. Chạy `npm run init-sheets` trỏ vào spreadsheet thật (cùng `.env` production). Lệnh chỉ **tạo sheet còn thiếu và thêm cột vào cuối dòng tiêu đề**, không sửa/xóa dữ liệu; bản đang chạy vẫn hoạt động bình thường với cột/sheet mới.
+2. Deploy bản mới.
+
+Làm ngược thứ tự cũng không sập app: thiếu 2 cột thì app đọc như "chưa cọc, chưa có link", thiếu sheet `GroupCosts` thì coi như chưa nhập chi phí; chỉ khi lưu tiền cọc, tạo link hoặc thêm khoản chi mới báo "Chạy npm run init-sheets" (chạy xong dùng được ngay, không cần khởi động lại). Đơn cũ được coi là chưa cọc (COD = tổng đơn như trước).
 
 ### Chống ghi đè / ghi trùng
 

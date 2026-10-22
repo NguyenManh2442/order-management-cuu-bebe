@@ -97,25 +97,72 @@ export function sizeTone(size: string): string {
 }
 
 /** Thẻ size nhỏ tự xuống dòng — không gây cuộn ngang trên điện thoại. */
-export function SizeStatsGrid({ sizes, total }: { sizes: SizeStat[]; total: number }) {
+export function SizeStatsGrid({
+  sizes,
+  total,
+  selected,
+  onSelect,
+}: {
+  sizes: SizeStat[]
+  total: number
+  /** Size đang lọc danh sách đơn (để tô đậm ô đó). */
+  selected?: string
+  /** Có = bấm vào ô size để lọc danh sách đơn theo size đó (bấm lại để bỏ); bấm "Tổng" gọi với '' = mọi size. */
+  onSelect?: (size: string) => void
+}) {
   return (
     <div className="grid grid-cols-[repeat(auto-fill,minmax(4.5rem,1fr))] gap-2">
-      {sizes.map((s) => (
-        <div
-          key={s.size}
+      {sizes.map((s) => {
+        const className = cn(
+          'rounded-lg border px-2 py-2 text-center',
+          s.quantity === 0 ? 'border-border bg-card text-muted-foreground opacity-60' : sizeTone(s.size),
+          selected === s.size && 'ring-2 ring-primary ring-offset-1',
+          onSelect && 'cursor-pointer transition-shadow hover:shadow-sm',
+        )
+        const body = (
+          <>
+            <div className="truncate text-xs font-medium opacity-75">{s.size}</div>
+            <div className="text-lg font-semibold tabular-nums">{formatNumber(s.quantity)}</div>
+          </>
+        )
+        return onSelect ? (
+          <button
+            key={s.size}
+            type="button"
+            className={className}
+            aria-pressed={selected === s.size}
+            title={selected === s.size ? 'Bỏ lọc size' : `Xem các đơn size ${s.size}`}
+            onClick={() => onSelect(s.size)}
+          >
+            {body}
+          </button>
+        ) : (
+          <div key={s.size} className={className}>
+            {body}
+          </div>
+        )
+      })}
+      {onSelect ? (
+        // Bấm "Tổng" để bỏ lọc size, hiện lại đơn của mọi size.
+        <button
+          type="button"
           className={cn(
-            'rounded-lg border px-2 py-2 text-center',
-            s.quantity === 0 ? 'border-border bg-card text-muted-foreground opacity-60' : sizeTone(s.size),
+            'cursor-pointer rounded-lg border border-primary bg-primary px-2 py-2 text-center text-primary-foreground transition-shadow hover:shadow-sm',
+            !selected && 'ring-2 ring-primary ring-offset-1',
           )}
+          aria-pressed={!selected}
+          title={selected ? 'Hiện tất cả size' : 'Đang hiện tất cả size'}
+          onClick={() => onSelect('')}
         >
-          <div className="truncate text-xs font-medium opacity-75">{s.size}</div>
-          <div className="text-lg font-semibold tabular-nums">{formatNumber(s.quantity)}</div>
+          <div className="text-xs font-medium opacity-80">Tổng</div>
+          <div className="text-lg font-semibold tabular-nums">{formatNumber(total)}</div>
+        </button>
+      ) : (
+        <div className="rounded-lg border border-primary bg-primary px-2 py-2 text-center text-primary-foreground">
+          <div className="text-xs font-medium opacity-80">Tổng</div>
+          <div className="text-lg font-semibold tabular-nums">{formatNumber(total)}</div>
         </div>
-      ))}
-      <div className="rounded-lg border border-primary bg-primary px-2 py-2 text-center text-primary-foreground">
-        <div className="text-xs font-medium opacity-80">Tổng</div>
-        <div className="text-lg font-semibold tabular-nums">{formatNumber(total)}</div>
-      </div>
+      )}
     </div>
   )
 }

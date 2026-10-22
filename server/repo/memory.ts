@@ -5,7 +5,7 @@ export class MemoryStore implements DataStore {
   private data: Snapshot
 
   constructor(seed?: Snapshot) {
-    this.data = structuredClone(seed ?? { customers: [], groups: [], orders: [], items: [] })
+    this.data = structuredClone({ customers: [], groups: [], orders: [], items: [], costs: [], ...seed })
   }
 
   async snapshot(): Promise<Snapshot> {
@@ -21,6 +21,13 @@ export class MemoryStore implements DataStore {
     const idx = list.findIndex((r) => r.id === row.id)
     if (idx < 0) throw new Error(`Row ${row.id} not found in ${table}`)
     list[idx] = structuredClone(row)
+  }
+
+  async updateMany<T extends TableName>(table: T, rows: RowOf<T>[]): Promise<void> {
+    const ids = new Set((this.data[table] as RowOf<T>[]).map((r) => r.id))
+    const missing = rows.find((r) => !ids.has(r.id))
+    if (missing) throw new Error(`Row ${missing.id} not found in ${table}`)
+    for (const row of rows) await this.update(table, row)
   }
 
   async remove(table: TableName, ids: string[]): Promise<void> {

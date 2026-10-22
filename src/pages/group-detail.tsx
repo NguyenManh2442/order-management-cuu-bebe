@@ -4,6 +4,8 @@ import { Link, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { ORDER_STATUS_LABELS } from '@shared/constants'
 import { computeGroupStats } from '@shared/stats'
+import { BulkActionBar, useOrderSelection } from '@/components/bulk-actions'
+import { GroupCostsLink } from '@/components/group-costs'
 import { ExportCsvButton, OrderFilters, useOrderFilters } from '@/components/order-filters'
 import { OrderList } from '@/components/order-list'
 import { PageHeader } from '@/components/page-header'
@@ -21,7 +23,8 @@ export function GroupDetailPage() {
   const id = useParams().id!
   const { data, isPending, error, refetch } = useGroup(id)
   const { data: config } = useConfig()
-  const { filters, setFilter, clear, filtered } = useOrderFilters(data?.orders)
+  const { filters, setFilter, clear, filtered, sizeOptions } = useOrderFilters(data?.orders)
+  const selection = useOrderSelection(filtered)
   const [includeCancelled, setIncludeCancelled] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(false)
   const save = useSaveGroup(id)
@@ -132,8 +135,15 @@ export function GroupDetailPage() {
             </label>
           )}
         </div>
-        <SizeStatsGrid sizes={stats.sizes} total={stats.item_count} />
+        <SizeStatsGrid
+          sizes={stats.sizes}
+          total={stats.item_count}
+          selected={filters.size}
+          onSelect={(size) => setFilter('size', !size || filters.size === size ? '' : size)}
+        />
       </section>
+
+      <GroupCostsLink groupId={id} costs={data.costs ?? []} orders={orders} />
 
       <section className="mt-6">
         <div className="mb-3 flex items-center justify-between gap-2">
@@ -146,7 +156,13 @@ export function GroupDetailPage() {
           </h2>
           <ExportCsvButton orders={filtered} filename={`don-hang-${slugify(group.name)}-${dateKey(new Date().toISOString())}`} />
         </div>
-        <OrderFilters filters={filters} setFilter={setFilter} clear={clear} searchPlaceholder="Tìm khách, SĐT, mã đơn…" />
+        <OrderFilters
+          filters={filters}
+          setFilter={setFilter}
+          clear={clear}
+          sizeOptions={sizeOptions}
+          searchPlaceholder="Tìm khách, SĐT, mã đơn…"
+        />
         {isOpen && (
           <Button asChild size="lg" className="mt-3 w-full md:hidden">
             <Link to={`/orders/new?group=${id}`}>
@@ -172,10 +188,11 @@ export function GroupDetailPage() {
           ) : !filtered.length ? (
             <EmptyState title="Không có đơn phù hợp bộ lọc" />
           ) : (
-            <OrderList orders={filtered} />
+            <OrderList orders={filtered} selection={selection} />
           )}
         </div>
       </section>
+      <BulkActionBar selection={selection} />
 
       <ConfirmDialog
         open={confirmToggle}

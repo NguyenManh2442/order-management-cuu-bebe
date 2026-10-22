@@ -1,6 +1,6 @@
 import type { OrderStatus } from '../../shared/constants'
 import { summarizeItems } from '../../shared/stats'
-import type { Customer, Order, OrderGroup, OrderItem } from '../../shared/types'
+import type { Customer, GroupCost, Order, OrderGroup, OrderItem } from '../../shared/types'
 import { EMPTY_GHN_FIELDS } from '../service'
 import type { Snapshot } from './types'
 
@@ -79,20 +79,58 @@ export function createDemoSnapshot(sizes: string[]): Snapshot {
       }
       items.push(...its)
       const status = g.status === 'closed' ? pick(['delivered', 'delivered', 'delivered', 'returned', 'cancelled'] as const) : pick(statusPool)
+      const note = rand() < 0.25 ? pick(['Giao giờ hành chính', 'Gọi trước khi giao', 'Khách cọc 100k', 'Gói quà giúp shop']) : ''
+      const total = its.reduce((s, i) => s + i.line_total, 0)
       orders.push({
         id: orderId,
         order_code: `DEMO-${String(++seq).padStart(3, '0')}`,
         group_id: group.id,
         customer_id: customer.id,
         items_summary: summarizeItems(its),
-        total_amount: its.reduce((s, i) => s + i.line_total, 0),
+        total_amount: total,
         status,
-        note: rand() < 0.25 ? pick(['Giao giờ hành chính', 'Gọi trước khi giao', 'Khách cọc 100k', 'Gói quà giúp shop']) : '',
+        note,
         ...EMPTY_GHN_FIELDS,
+        // Một số đơn đã cọc / chuyển khoản trước để thử phần "còn phải thu".
+        paid_amount: note === 'Khách cọc 100k' ? Math.min(100_000, total) : rand() < 0.15 ? total : 0,
+        public_token: '',
         created_at: t,
         updated_at: t,
       })
     }
   }
-  return { customers, groups, orders, items }
+  // Chi phí mẫu theo từng nhóm: [loại, tên, số lượng, đơn vị, đơn giá, cách tính]
+  const costSeeds: [GroupCost['category'], string, number, string, number, GroupCost['basis']][][] = [
+    [
+      ['material', 'Vải nhung đỏ', 1.2, 'mét', 85_000, 'per_item'],
+      ['material', 'Khóa kéo + chỉ', 1, 'bộ', 6_000, 'per_item'],
+      ['labor', 'Công may', 1, 'chiếc', 60_000, 'per_item'],
+      ['other', 'Túi đóng gói, tem nhãn', 1, 'lô', 300_000, 'fixed'],
+    ],
+    [
+      ['material', 'Vải lụa', 2.5, 'mét', 120_000, 'per_item'],
+      ['labor', 'Công may áo dài', 1, 'chiếc', 150_000, 'per_item'],
+    ],
+    [
+      ['material', 'Phôi áo thun', 1, 'cái', 45_000, 'per_item'],
+      ['labor', 'Công in', 1, 'cái', 15_000, 'per_item'],
+      ['other', 'Làm khuôn in', 1, 'lần', 500_000, 'fixed'],
+    ],
+  ]
+  const costs: GroupCost[] = groups.flatMap((g, i) =>
+    (costSeeds[i] ?? []).map(([category, name, quantity, unit, unit_price, basis]) => ({
+      id: id('k'),
+      group_id: g.id,
+      category,
+      name,
+      quantity,
+      unit,
+      unit_price,
+      basis,
+      note: '',
+      created_at: g.created_at,
+      updated_at: g.created_at,
+    })),
+  )
+  return { customers, groups, orders, items, costs }
 }

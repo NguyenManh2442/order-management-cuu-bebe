@@ -406,6 +406,21 @@ export class ShippingService {
   async printUrl(orderId: string): Promise<string> {
     const { order } = this.findOrder(await this.store.snapshot(), orderId)
     if (!isActiveShipment(order)) throw new AppError(400, 'Đơn không có vận đơn GHN đang hiệu lực.')
-    return this.ghn.printUrl(order.ghn_order_code)
+    return this.ghn.printUrl([order.ghn_order_code])
+  }
+
+  /** In gộp nhãn nhiều đơn trong một trang. Đơn chưa có vận đơn hiệu lực thì bỏ qua. */
+  async printUrlMany(orderIds: string[]): Promise<{ url: string; count: number; skipped: string[] }> {
+    const snap = await this.store.snapshot()
+    const byId = new Map(snap.orders.map((o) => [o.id, o]))
+    const codes: string[] = []
+    const skipped: string[] = []
+    for (const id of new Set(orderIds)) {
+      const o = byId.get(id)
+      if (o && isActiveShipment(o)) codes.push(o.ghn_order_code)
+      else skipped.push(o?.order_code ?? id)
+    }
+    if (!codes.length) throw new AppError(400, 'Các đơn đã chọn chưa có vận đơn GHN để in.')
+    return { url: await this.ghn.printUrl(codes), count: codes.length, skipped }
   }
 }

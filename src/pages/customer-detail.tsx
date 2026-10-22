@@ -2,7 +2,9 @@ import { ClipboardList, MapPin, MessageCircle, PackageCheck, Phone, Plus, Trash2
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
+import { historyByCustomer } from '@shared/customer-history'
 import { computeDashboardStats } from '@shared/stats'
+import { CustomerRiskBanner } from '@/components/customer-risk'
 import { OrderList } from '@/components/order-list'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, ErrorState, ListSkeleton } from '@/components/states'
@@ -58,6 +60,7 @@ export function CustomerDetailPage() {
       />
       <Card>
         <CardContent className="grid gap-3">
+          <CustomerRiskBanner history={historyByCustomer(orders).get(c.id)} />
           {c.address && (
             <p className="flex gap-2 text-sm">
               <MapPin className="mt-0.5 size-4 shrink-0 text-muted-foreground" />

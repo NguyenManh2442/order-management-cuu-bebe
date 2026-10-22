@@ -2,16 +2,20 @@ import { timingSafeEqual } from 'node:crypto'
 import { Router, type Request } from 'express'
 import type { ZodType } from 'zod'
 import {
+  bulkOrderStatusInputSchema,
+  ghnBulkPrintInputSchema,
   ghnCancelInputSchema,
   ghnDraftSchema,
   ghnSettingsInputSchema,
   ghnShipmentInputSchema,
   ghnPlacesQuerySchema,
   ghnShopsQuerySchema,
+  groupCostInputSchema,
   groupInputSchema,
   loginInputSchema,
   orderInputSchema,
   orderStatusInputSchema,
+  publicLinkInputSchema,
 } from '../shared/schemas'
 import type { AppConfig } from '../shared/types'
 import {
@@ -38,6 +42,28 @@ function parse<T>(schema: ZodType<T>, body: unknown): T {
 }
 
 const param = (req: Request, name: string) => String(req.params[name])
+
+/** Tối đa 60 lượt tra cứu / phút / IP cho trang công khai. */
+const publicHits = new Map<string, { count: number; reset: number }>()
+function publicRateLimited(ip: string): boolean {
+  const now = Date.now()
+  const hit = publicHits.get(ip)
+  if (!hit || hit.reset < now) {
+    if (publicHits.size >= 10_000) {
+      // Dọn IP đã hết hạn; vẫn đầy thì bỏ các IP cũ nhất (Map giữ thứ tự thêm vào) —
+      // không xóa sạch để kẻ dò không thể tự reset bộ đếm của mình.
+      for (const [key, v] of publicHits) if (v.reset < now) publicHits.delete(key)
+      for (const key of publicHits.keys()) {
+        if (publicHits.size < 10_000) break
+        publicHits.delete(key)
+      }
+    }
+    publicHits.delete(ip)
+    publicHits.set(ip, { count: 1, reset: now + 60_000 })
+    return false
+  }
+  return ++hit.count > 60
+}
 
 function sameSecret(actual: string | undefined, expected: string): boolean {
   const a = Buffer.from(actual ?? '')
@@ -81,6 +107,16 @@ export function createApiRouter(service: OrderService, ghnRuntime: GhnRuntime): 
     const username = getSessionUser(req)
     if (!username) throw new AppError(401, 'Chưa đăng nhập')
     res.json({ username })
+  })
+
+  /**
+   * Trang tra cứu đơn cho khách — không cần đăng nhập, chỉ cần mã bí mật trong link.
+   * Giới hạn lượt gọi để không ai dò mã hay làm cạn quota Google Sheets.
+   */
+  api.get('/public/orders/:token', async (req, res) => {
+    if (publicRateLimited(req.ip ?? 'unknown')) throw new AppError(429, 'Bạn tra cứu quá nhanh, vui lòng thử lại sau ít phút.')
+    res.setHeader('X-Robots-Tag', 'noindex, nofollow')
+    res.json(await service.getPublicOrder(param(req, 'token')))
   })
 
   /** Thông tin công khai cho màn đăng nhập (không chứa bí mật). */
@@ -162,6 +198,9 @@ export function createApiRouter(service: OrderService, ghnRuntime: GhnRuntime): 
   api.post('/orders/:id/ghn/print', async (req, res) => {
     res.json({ url: await ghn().printUrl(param(req, 'id')) })
   })
+  api.post('/ghn/print', async (req, res) => {
+    res.json(await ghn().printUrlMany(parse(ghnBulkPrintInputSchema, req.body).order_ids))
+  })
 
   api.get('/groups', async (_req, res) => {
     res.json(await service.listGroups())
@@ -176,6 +215,18 @@ export function createApiRouter(service: OrderService, ghnRuntime: GhnRuntime): 
     res.json(await service.updateGroup(param(req, 'id'), parse(groupInputSchema, req.body)))
   })
 
+  api.post('/groups/:id/costs', async (req, res) => {
+    res.status(201).json(await service.createCost(param(req, 'id'), parse(groupCostInputSchema, req.body)))
+  })
+  api.put('/groups/:id/costs/:costId', async (req, res) => {
+    res.json(await service.updateCost(param(req, 'id'), param(req, 'costId'), parse(groupCostInputSchema, req.body)))
+  })
+  api.delete('/groups/:id/costs/:costId', async (req, res) => {
+    const expected = typeof req.query.expected_updated_at === 'string' ? req.query.expected_updated_at : undefined
+    await service.deleteCost(param(req, 'id'), param(req, 'costId'), expected)
+    res.status(204).end()
+  })
+
   api.get('/orders', async (_req, res) => {
     res.json(await service.listOrders())
   })
@@ -187,6 +238,12 @@ export function createApiRouter(service: OrderService, ghnRuntime: GhnRuntime): 
   })
   api.put('/orders/:id', async (req, res) => {
     res.json(await service.updateOrder(param(req, 'id'), parse(orderInputSchema, req.body)))
+  })
+  api.post('/orders/bulk-status', async (req, res) => {
+    res.json(await service.bulkUpdateStatus(parse(bulkOrderStatusInputSchema, req.body)))
+  })
+  api.post('/orders/:id/public-link', async (req, res) => {
+    res.json(await service.publicLink(param(req, 'id'), parse(publicLinkInputSchema, req.body).regenerate))
   })
   api.patch('/orders/:id/status', async (req, res) => {
     res.json(await service.updateOrderStatus(param(req, 'id'), parse(orderStatusInputSchema, req.body)))

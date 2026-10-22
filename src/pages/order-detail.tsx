@@ -2,8 +2,12 @@ import { Ban, MapPin, MessageCircle, Pencil, Phone, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
+import { codMismatch } from '@shared/ghn'
+import { OPEN_ORDER_STATUSES, amountDueNow } from '@shared/stats'
+import { CustomerRiskBanner } from '@/components/customer-risk'
 import { GhnShipmentCard } from '@/components/ghn-shipment'
 import { PageHeader } from '@/components/page-header'
+import { PublicLinkCard } from '@/components/public-link'
 import { sizeTone } from '@/components/stats'
 import { ErrorState, ListSkeleton } from '@/components/states'
 import { StatusSelect } from '@/components/status'
@@ -26,6 +30,7 @@ export function OrderDetailPage() {
   if (error) return <ErrorState error={error} onRetry={refetch} />
 
   const c = order.customer
+  const isOpen = OPEN_ORDER_STATUSES.includes(order.status)
   return (
     <>
       <PageHeader
@@ -52,6 +57,16 @@ export function OrderDetailPage() {
               <div className="text-right">
                 <div className="text-xs text-muted-foreground">Tổng tiền</div>
                 <div className="text-2xl font-bold tabular-nums">{formatVND(order.total_amount)}</div>
+                {order.paid_amount > 0 && (
+                  <div className="text-sm">
+                    <span className="text-muted-foreground">Đã trả {formatVND(order.paid_amount)}</span>
+                    {isOpen && (amountDueNow(order) ? (
+                      <b className="tabular-nums"> · còn thu {formatVND(amountDueNow(order))}</b>
+                    ) : (
+                      <b className="text-emerald-700"> · đã thanh toán đủ</b>
+                    ))}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -84,6 +99,20 @@ export function OrderDetailPage() {
                 <span>Tổng cộng</span>
                 <span className="tabular-nums">{formatVND(order.total_amount)}</span>
               </div>
+              {order.paid_amount > 0 && (
+                <>
+                  <div className="mt-1 flex justify-between text-sm text-muted-foreground">
+                    <span>Đã cọc / chuyển khoản</span>
+                    <span className="tabular-nums">− {formatVND(order.paid_amount)}</span>
+                  </div>
+                  {isOpen && (
+                    <div className="mt-1 flex justify-between font-semibold">
+                      <span>Còn phải thu</span>
+                      <span className="tabular-nums">{formatVND(amountDueNow(order))}</span>
+                    </div>
+                  )}
+                </>
+              )}
             </CardContent>
           </Card>
 
@@ -106,6 +135,7 @@ export function OrderDetailPage() {
               </Link>
             </CardHeader>
             <CardContent className="grid gap-3">
+              <CustomerRiskBanner history={order.customer_history} />
               <div>
                 <div className="font-semibold">{c.name}</div>
                 <div className="text-sm text-muted-foreground">{c.phone}</div>
@@ -137,7 +167,14 @@ export function OrderDetailPage() {
             </CardContent>
           </Card>
 
+          {codMismatch(order) && (
+            <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              <b>Thu hộ trên GHN ({formatVND(order.ghn_cod_amount)}) khác số còn phải thu ({formatVND(amountDueNow(order))}).</b>{' '}
+              Sửa đơn trong app không cập nhật sang GHN — sửa COD trên trang GHN, hoặc hủy vận đơn rồi tạo lại.
+            </div>
+          )}
           <GhnShipmentCard order={order} />
+          <PublicLinkCard order={order} />
 
           <div className="grid gap-2 text-xs text-muted-foreground">
             <span>Tạo lúc: {formatDateTime(order.created_at)}</span>
