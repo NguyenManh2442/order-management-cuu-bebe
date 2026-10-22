@@ -1,9 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import type { OrderView } from '@shared/types'
+import { OPEN_ORDER_STATUSES, amountDue } from '@shared/stats'
 import { Button } from '@/components/ui/button'
 import { cn, formatDateTime, formatNumber, formatVND } from '@/lib/utils'
+import { SelectCheckbox, type OrderSelection } from './bulk-actions'
 import { FacebookLink, PhoneLink } from './contact-links'
+import { CustomerRiskBadge } from './customer-risk'
 import { GhnListAction } from './ghn-shipment'
 import { sizeTone } from './stats'
 import { StatusSelect } from './status'
@@ -28,17 +31,59 @@ function ItemsText({ order }: { order: OrderView }) {
   )
 }
 
-function OrderCard({ order, showGroup }: { order: OrderView; showGroup?: boolean }) {
+/**
+ * Đơn đang xử lý: "Cọc 100.000 ₫ · còn …" hoặc "Đã thanh toán".
+ * Đơn đã giao / hủy / hoàn: chỉ ghi số đã trả (không còn gì để thu).
+ */
+function PaidNote({ order, className }: { order: OrderView; className?: string }) {
+  if (!order.paid_amount) return null
+  if (!OPEN_ORDER_STATUSES.includes(order.status)) {
+    return <span className={cn('block text-xs font-normal text-muted-foreground', className)}>Đã trả {formatVND(order.paid_amount)}</span>
+  }
+  const due = amountDue(order)
   return (
-    <li className="relative rounded-xl border bg-card p-3 shadow-xs transition-colors hover:bg-secondary/40">
+    <span className={cn('block text-xs font-normal', due ? 'text-muted-foreground' : 'text-emerald-700', className)}>
+      {due ? `Cọc ${formatVND(order.paid_amount)} · còn ${formatVND(due)}` : 'Đã thanh toán'}
+    </span>
+  )
+}
+
+function OrderCard({
+  order,
+  showGroup,
+  selection,
+}: {
+  order: OrderView
+  showGroup?: boolean
+  selection?: OrderSelection
+}) {
+  const selected = selection?.isSelected(order.id)
+  return (
+    <li
+      className={cn(
+        'relative min-w-0 rounded-xl border bg-card p-3 shadow-xs transition-colors hover:bg-secondary/40',
+        selected && 'border-primary ring-1 ring-primary',
+      )}
+    >
       <Link to={`/orders/${order.id}`} className="absolute inset-0 rounded-xl" aria-label={`Xem đơn ${order.order_code}`} />
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        {selection && (
+          <SelectCheckbox
+            checked={!!selected}
+            onChange={() => selection.toggle(order.id)}
+            label={`Chọn đơn ${order.order_code}`}
+            className="mr-0"
+          />
+        )}
+        <div className="min-w-0 flex-1">
           <div className="truncate text-xs text-muted-foreground">
             <span className="font-mono font-medium text-foreground">{order.order_code}</span> ·{' '}
             {formatDateTime(order.created_at)}
           </div>
-          <div className="mt-0.5 truncate font-semibold">{order.customer.name}</div>
+          <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
+            <span className="truncate font-semibold">{order.customer.name}</span>
+            <CustomerRiskBadge history={order.customer_history} className="shrink-0" />
+          </div>
         </div>
         <StatusSelect order={order} className="relative z-10 shrink-0" />
       </div>
@@ -55,17 +100,37 @@ function OrderCard({ order, showGroup }: { order: OrderView; showGroup?: boolean
         <ItemsText order={order} />
         <span className="shrink-0 font-semibold tabular-nums">{formatVND(order.total_amount)}</span>
       </div>
+      <PaidNote order={order} className="mt-0.5 text-right" />
       {order.note && <p className="mt-1 line-clamp-2 text-sm text-muted-foreground italic">{order.note}</p>}
     </li>
   )
 }
 
-function OrderTable({ orders, showGroup }: { orders: OrderView[]; showGroup?: boolean }) {
+function OrderTable({
+  orders,
+  showGroup,
+  selection,
+}: {
+  orders: OrderView[]
+  showGroup?: boolean
+  selection?: OrderSelection
+}) {
+  const selectedCount = selection ? orders.filter((o) => selection.isSelected(o.id)).length : 0
   return (
     <div className="overflow-x-auto rounded-xl border bg-card shadow-xs">
       <table className="w-full text-sm">
         <thead className="border-b bg-muted/60 text-left text-xs text-muted-foreground">
           <tr className="[&>th]:px-3 [&>th]:py-2.5 [&>th]:font-medium">
+            {selection && (
+              <th className="w-10">
+                <SelectCheckbox
+                  checked={selectedCount > 0 && selectedCount === orders.length}
+                  indeterminate={selectedCount > 0}
+                  onChange={() => selection.setMany(orders.map((o) => o.id), selectedCount !== orders.length)}
+                  label="Chọn tất cả đơn đang hiện"
+                />
+              </th>
+            )}
             <th>Mã đơn</th>
             <th>Khách hàng</th>
             <th>Số điện thoại</th>
@@ -84,7 +149,22 @@ function OrderTable({ orders, showGroup }: { orders: OrderView[]; showGroup?: bo
           {orders.map((o) => {
             const prices = [...new Set(o.items.map((i) => i.unit_price))]
             return (
-              <tr key={o.id} className="relative border-b last:border-0 hover:bg-secondary/40 [&>td]:px-3 [&>td]:py-2.5">
+              <tr
+                key={o.id}
+                className={cn(
+                  'relative border-b last:border-0 hover:bg-secondary/40 [&>td]:px-3 [&>td]:py-2.5',
+                  selection?.isSelected(o.id) && 'bg-primary/5',
+                )}
+              >
+                {selection && (
+                  <td>
+                    <SelectCheckbox
+                      checked={selection.isSelected(o.id)}
+                      onChange={() => selection.toggle(o.id)}
+                      label={`Chọn đơn ${o.order_code}`}
+                    />
+                  </td>
+                )}
                 <td className="font-mono text-xs font-medium whitespace-nowrap">
                   <Link to={`/orders/${o.id}`} className="after:absolute after:inset-0 hover:underline">
                     {o.order_code}
@@ -92,6 +172,7 @@ function OrderTable({ orders, showGroup }: { orders: OrderView[]; showGroup?: bo
                 </td>
                 <td className="max-w-44">
                   <div className="truncate font-medium">{o.customer.name}</div>
+                  <CustomerRiskBadge history={o.customer_history} className="relative z-10 mt-0.5" />
                   <FacebookLink url={o.customer.facebook_url} className="text-xs" />
                 </td>
                 <td className="whitespace-nowrap">
@@ -107,7 +188,10 @@ function OrderTable({ orders, showGroup }: { orders: OrderView[]; showGroup?: bo
                 <td className="hidden text-right whitespace-nowrap tabular-nums xl:table-cell">
                   {prices.length === 1 ? formatVND(prices[0]) : prices.length ? 'Nhiều giá' : ''}
                 </td>
-                <td className="text-right font-semibold whitespace-nowrap tabular-nums">{formatVND(o.total_amount)}</td>
+                <td className="text-right font-semibold whitespace-nowrap tabular-nums">
+                  {formatVND(o.total_amount)}
+                  <PaidNote order={o} />
+                </td>
                 <td>
                   <StatusSelect order={o} className="relative z-10" />
                 </td>
@@ -131,23 +215,40 @@ function OrderTable({ orders, showGroup }: { orders: OrderView[]; showGroup?: bo
 export function OrderList({
   orders,
   showGroup,
+  selection,
   className,
 }: {
   orders: OrderView[]
   showGroup?: boolean
+  /** Có = hiện ô chọn để thao tác hàng loạt. */
+  selection?: OrderSelection
   className?: string
 }) {
   const [limit, setLimit] = useState(PAGE)
   const visible = orders.slice(0, limit)
   return (
-    <div className={cn('grid gap-3', className)}>
-      <ul className="grid gap-3 md:hidden">
+    <div className={cn('grid min-w-0 gap-3', className)}>
+      {selection && (
+        <div className="-my-1 flex items-center md:hidden">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              const allOn = visible.every((o) => selection.isSelected(o.id))
+              selection.setMany(visible.map((o) => o.id), !allOn)
+            }}
+          >
+            {visible.every((o) => selection.isSelected(o.id)) ? 'Bỏ chọn tất cả' : `Chọn tất cả ${visible.length} đơn đang hiện`}
+          </Button>
+        </div>
+      )}
+      <ul className="grid min-w-0 gap-3 md:hidden">
         {visible.map((o) => (
-          <OrderCard key={o.id} order={o} showGroup={showGroup} />
+          <OrderCard key={o.id} order={o} showGroup={showGroup} selection={selection} />
         ))}
       </ul>
-      <div className="hidden md:block">
-        <OrderTable orders={visible} showGroup={showGroup} />
+      <div className="hidden min-w-0 md:block">
+        <OrderTable orders={visible} showGroup={showGroup} selection={selection} />
       </div>
       {orders.length > limit && (
         <Button variant="outline" onClick={() => setLimit((l) => l + PAGE)}>

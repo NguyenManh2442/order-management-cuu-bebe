@@ -1,6 +1,8 @@
 import { Plus, RefreshCw, Settings } from 'lucide-react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
+import { BulkActionBar, useOrderSelection } from '@/components/bulk-actions'
+import { DeliveryFailedCard, deliveryFailed } from '@/components/needs-attention'
 import { ExportCsvButton, OrderFilters, useOrderFilters } from '@/components/order-filters'
 import { OrderList } from '@/components/order-list'
 import { PageHeader } from '@/components/page-header'
@@ -13,9 +15,10 @@ import { dateKey } from '@/lib/utils'
 export function OrdersPage() {
   const { data: orders, isPending, error, refetch } = useOrders()
   const { data: groups } = useGroups()
-  const { filters, setFilter, clear, filtered } = useOrderFilters(orders)
+  const { filters, setFilter, clear, filtered, sizeOptions } = useOrderFilters(orders)
   const { data: config } = useConfig()
   const syncGhn = useSyncAllGhn()
+  const selection = useOrderSelection(filtered)
 
   return (
     <>
@@ -58,7 +61,8 @@ export function OrdersPage() {
           </>
         }
       />
-      <OrderFilters filters={filters} setFilter={setFilter} clear={clear} groups={groups} />
+      <DeliveryFailedCard orders={deliveryFailed(orders)} className="mb-4" />
+      <OrderFilters filters={filters} setFilter={setFilter} clear={clear} groups={groups} sizeOptions={sizeOptions} />
       <div className="mt-4">
         {isPending ? (
           <ListSkeleton />
@@ -79,9 +83,10 @@ export function OrdersPage() {
         ) : !filtered.length ? (
           <EmptyState title="Không có đơn phù hợp bộ lọc" action={<Button variant="outline" onClick={clear}>Xóa bộ lọc</Button>} />
         ) : (
-          <OrderList orders={filtered} showGroup />
+          <OrderList orders={filtered} showGroup selection={selection} />
         )}
       </div>
+      <BulkActionBar selection={selection} />
     </>
   )
 }

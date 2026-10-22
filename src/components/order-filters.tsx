@@ -2,12 +2,15 @@ import { Download, Filter, Search, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ORDER_STATUSES, type OrderStatus } from '@shared/constants'
+import { normalizeSize } from '@shared/phone'
+import { sortSizes } from '@shared/stats'
 import type { OrderView } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { ORDER_STATUS_OPTIONS } from '@/components/status'
 import { Dropdown } from '@/components/ui/dropdown'
 import { Input, Label } from '@/components/ui/input'
 import { downloadCsv, ordersToCsv } from '@/lib/csv'
+import { useConfig } from '@/lib/queries'
 import { cn, dateKey, searchKey } from '@/lib/utils'
 import { toast } from 'sonner'
 
@@ -17,6 +20,14 @@ export interface OrderFilterState {
   from: string
   to: string
   group: string
+  /** Đơn có ít nhất một dòng sản phẩm đúng size này. */
+  size: string
+}
+
+export interface SizeOption {
+  size: string
+  /** Số đơn (trong danh sách đang xét) có size này. */
+  count: number
 }
 
 /** Bộ lọc lưu trên URL để có thể chia sẻ/quay lại và để Báo cáo link thẳng tới "Đơn chờ xác nhận". */
@@ -30,7 +41,9 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     from: params.get('from') ?? '',
     to: params.get('to') ?? '',
     group: params.get('group') ?? '',
+    size: normalizeSize(params.get('size') ?? ''),
   }
+  const { data: config } = useConfig()
 
   const setFilter = (key: keyof OrderFilterState, value: string) =>
     setParams(
@@ -47,13 +60,13 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        for (const k of ['q', 'status', 'from', 'to', 'group']) next.delete(k)
+        for (const k of ['q', 'status', 'from', 'to', 'group', 'size']) next.delete(k)
         return next
       },
       { replace: true },
     )
 
-  const { q, status, from, to, group } = filters
+  const { q, status, from, to, group, size } = filters
   const filtered = useMemo(() => {
     if (!orders) return []
     const text = searchKey(q)
@@ -61,6 +74,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     return orders.filter((o) => {
       if (status && o.status !== status) return false
       if (group && o.group_id !== group) return false
+      if (size && !o.items.some((i) => normalizeSize(i.size) === size)) return false
       if (from || to) {
         const d = dateKey(o.created_at)
         if (from && d < from) return false
@@ -75,9 +89,19 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
       }
       return true
     })
-  }, [orders, q, status, from, to, group])
+  }, [orders, q, status, from, to, group, size])
 
-  return { filters, setFilter, clear, filtered }
+  /** Size để chọn: size cấu hình + size lạ đã có trong đơn, kèm số đơn mỗi size. */
+  const sizeOptions = useMemo<SizeOption[]>(() => {
+    const counts = new Map<string, number>()
+    for (const o of orders ?? []) {
+      for (const s of new Set(o.items.map((i) => normalizeSize(i.size)))) counts.set(s, (counts.get(s) ?? 0) + 1)
+    }
+    const preferred = config?.sizes ?? []
+    return sortSizes([...preferred.map(normalizeSize), ...counts.keys()], preferred).map((s) => ({ size: s, count: counts.get(s) ?? 0 }))
+  }, [orders, config])
+
+  return { filters, setFilter, clear, filtered, sizeOptions }
 }
 
 export function OrderFilters({
@@ -85,15 +109,17 @@ export function OrderFilters({
   setFilter,
   clear,
   groups,
+  sizeOptions,
   searchPlaceholder = 'Tìm mã đơn, tên khách, SĐT…',
 }: {
   filters: OrderFilterState
   setFilter: (key: keyof OrderFilterState, value: string) => void
   clear: () => void
   groups?: { id: string; name: string }[]
+  sizeOptions?: SizeOption[]
   searchPlaceholder?: string
 }) {
-  const advancedCount = [filters.status, filters.from, filters.to, filters.group].filter(Boolean).length
+  const advancedCount = [filters.status, filters.from, filters.to, filters.group, filters.size].filter(Boolean).length
   const [open, setOpen] = useState(advancedCount > 0)
 
   return (
@@ -138,6 +164,20 @@ export function OrderFilters({
               value={filters.group}
               onChange={(v: string) => setFilter('group', v)}
               options={[{ value: '', label: 'Tất cả nhóm' }, ...groups.map((g) => ({ value: g.id, label: g.name }))]}
+            />
+          </div>
+        )}
+        {sizeOptions && (
+          <div className="col-span-2 grid gap-1 md:col-span-1">
+            <Label className="text-xs text-muted-foreground">Size</Label>
+            <Dropdown
+              aria-label="Lọc theo size"
+              value={filters.size}
+              onChange={(v: string) => setFilter('size', v)}
+              options={[
+                { value: '', label: 'Tất cả size' },
+                ...sizeOptions.map((o) => ({ value: o.size, label: o.size, description: `${o.count} đơn` })),
+              ]}
             />
           </div>
         )}

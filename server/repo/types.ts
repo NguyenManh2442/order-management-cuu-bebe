@@ -1,10 +1,11 @@
-import type { Customer, Order, OrderGroup, OrderItem } from '../../shared/types'
+import type { Customer, GroupCost, Order, OrderGroup, OrderItem } from '../../shared/types'
 
 export interface Snapshot {
   customers: Customer[]
   groups: OrderGroup[]
   orders: Order[]
   items: OrderItem[]
+  costs: GroupCost[]
 }
 
 export type TableName = keyof Snapshot
@@ -19,5 +20,7 @@ export interface DataStore {
   snapshot(fresh?: boolean): Promise<Snapshot>
   insert<T extends TableName>(table: T, rows: RowOf<T>[]): Promise<void>
   update<T extends TableName>(table: T, row: RowOf<T>): Promise<void>
+  /** Cập nhật nhiều dòng cùng lúc (mọi id phải tồn tại). */
+  updateMany<T extends TableName>(table: T, rows: RowOf<T>[]): Promise<void>
   remove(table: TableName, ids: string[]): Promise<void>
 }

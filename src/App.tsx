@@ -4,6 +4,8 @@ import { AppLayout } from '@/components/app-layout'
 import { EmptyState } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { useMe } from '@/lib/queries'
+import { CostFormPage } from '@/pages/cost-form'
+import { GroupCostsPage } from '@/pages/group-costs'
 import { CustomerDetailPage } from '@/pages/customer-detail'
 import { CustomersPage } from '@/pages/customers'
 import { GroupDetailPage } from '@/pages/group-detail'
@@ -16,6 +18,7 @@ import { OrderShipPage } from '@/pages/order-ship'
 import { GhnSettingsPage } from '@/pages/ghn-settings'
 import { OrdersPage } from '@/pages/orders'
 import { ReportsPage } from '@/pages/reports'
+import { TrackPage } from '@/pages/track'
 import { Link } from 'react-router'
 
 function RequireAuth() {
@@ -49,6 +52,8 @@ function NotFound() {
 
 export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
+  // Trang công khai cho khách: không cần đăng nhập.
+  { path: '/t/:token', element: <TrackPage /> },
   {
     element: <RequireAuth />,
     children: [
@@ -60,6 +65,9 @@ export const router = createBrowserRouter([
           { path: 'groups/new', element: <GroupFormPage /> },
           { path: 'groups/:id', element: <GroupDetailPage /> },
           { path: 'groups/:id/edit', element: <GroupFormPage /> },
+          { path: 'groups/:id/costs', element: <GroupCostsPage /> },
+          { path: 'groups/:id/costs/new', element: <CostFormPage /> },
+          { path: 'groups/:id/costs/:costId/edit', element: <CostFormPage /> },
           { path: 'orders', element: <OrdersPage /> },
           { path: 'orders/new', element: <OrderFormPage /> },
           { path: 'orders/:id', element: <OrderDetailPage /> },

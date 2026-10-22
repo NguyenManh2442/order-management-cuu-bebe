@@ -1,16 +1,28 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { GhnEnv, GhnPlace, GhnQuote, GhnSettingsView, GhnShop } from '@shared/ghn'
-import type { GhnDraft, GhnSettingsInput, GhnShipmentInput, GroupInput, LoginInput, OrderInput } from '@shared/schemas'
+import type {
+  GhnDraft,
+  GhnSettingsInput,
+  GhnShipmentInput,
+  GroupCostInput,
+  GroupInput,
+  LoginInput,
+  OrderInput,
+} from '@shared/schemas'
 import type {
   AppConfig,
+  BulkStatusResult,
   Customer,
   CustomerDetail,
+  CustomerLookup,
   CustomerSummary,
+  GroupCost,
   GroupDetail,
   GroupWithStats,
   Order,
   OrderGroup,
   OrderView,
+  PublicOrderView,
   SessionUser,
 } from '@shared/types'
 import type { OrderStatus } from '@shared/constants'
@@ -62,7 +74,7 @@ export const useCustomer = (id: string) =>
 export function lookupCustomerQuery(phone: string) {
   return {
     queryKey: keys.phone(phone),
-    queryFn: () => api.get<Customer | null>(`/customers/lookup?phone=${encodeURIComponent(phone)}`),
+    queryFn: () => api.get<CustomerLookup | null>(`/customers/lookup?phone=${encodeURIComponent(phone)}`),
     staleTime: 60_000,
   }
 }
@@ -106,6 +118,26 @@ export function useSaveGroup(id?: string) {
     mutationFn: (input: GroupInput) =>
       id ? api.put<OrderGroup>(`/groups/${id}`, input) : api.post<OrderGroup>('/groups', input),
     onSuccess: invalidate,
+  })
+}
+
+export function useSaveCost(groupId: string, costId?: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: GroupCostInput) =>
+      costId
+        ? api.put<GroupCost>(`/groups/${groupId}/costs/${costId}`, input)
+        : api.post<GroupCost>(`/groups/${groupId}/costs`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.group(groupId) }),
+  })
+}
+
+export function useDeleteCost(groupId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (c: Pick<GroupCost, 'id' | 'updated_at'>) =>
+      api.del(`/groups/${groupId}/costs/${c.id}?expected_updated_at=${encodeURIComponent(c.updated_at)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.group(groupId) }),
   })
 }
 
@@ -234,6 +266,41 @@ export function useCancelGhnShipment() {
     onSettled: invalidate,
   })
 }
+
+export function useBulkOrderStatus() {
+  const invalidate = useInvalidateAll()
+  return useMutation({
+    mutationFn: (v: { orders: Pick<Order, 'id' | 'updated_at'>[]; status: OrderStatus }) =>
+      api.post<BulkStatusResult>('/orders/bulk-status', {
+        status: v.status,
+        orders: v.orders.map((o) => ({ id: o.id, expected_updated_at: o.updated_at })),
+      }),
+    onSettled: invalidate,
+  })
+}
+
+/** Lấy link tra cứu cho khách (regenerate = đổi link, link cũ hết hiệu lực). */
+export function usePublicLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (v: { orderId: string; regenerate: boolean }) =>
+      api.post<{ token: string }>(`/orders/${v.orderId}/public-link`, { regenerate: v.regenerate }),
+    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: keys.order(v.orderId) }),
+  })
+}
+
+export const usePublicOrder = (token: string) =>
+  useQuery({
+    queryKey: ['public-order', token],
+    queryFn: () => api.get<PublicOrderView>(`/public/orders/${encodeURIComponent(token)}`),
+    retry: false,
+  })
+
+export const useBulkPrintGhn = () =>
+  useMutation({
+    mutationFn: (orderIds: string[]) =>
+      api.post<{ url: string; count: number; skipped: string[] }>('/ghn/print', { order_ids: orderIds }),
+  })
 
 export const usePrintGhnLabel = () =>
   useMutation({ mutationFn: (orderId: string) => api.post<{ url: string }>(`/orders/${orderId}/ghn/print`) })

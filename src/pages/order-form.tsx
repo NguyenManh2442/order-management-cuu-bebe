@@ -5,10 +5,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Controller, useFieldArray, useForm, useWatch, type Control } from 'react-hook-form'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
-import { MAX_ITEMS_PER_ORDER, ORDER_STATUS_LABELS } from '@shared/constants'
+import { MAX_ITEMS_PER_ORDER, ORDER_STATUS_LABELS, type OrderStatus } from '@shared/constants'
+import { historyExcluding } from '@shared/customer-history'
+import { isActiveShipment } from '@shared/ghn'
 import { isValidPhone, normalizePhone, normalizeSize } from '@shared/phone'
 import { orderInputSchema, type OrderInput } from '@shared/schemas'
 import type { Customer, GroupWithStats, OrderView } from '@shared/types'
+import { CustomerRiskBanner } from '@/components/customer-risk'
 import { FormSection, MoneyInput, StickyFormBar, useUnsavedChangesGuard } from '@/components/form-helpers'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, ErrorState, ListSkeleton } from '@/components/states'
@@ -31,6 +34,7 @@ function defaultsForCreate(groups: GroupWithStats[], groupParam: string | null, 
     items: [{ size: '', quantity: 1, unit_price: group?.default_unit_price ?? 0 }],
     status: 'pending',
     note: '',
+    paid_amount: 0,
   }
 }
 
@@ -48,6 +52,7 @@ function valuesFromOrder(o: OrderView): OrderInput {
       : [{ size: '', quantity: 1, unit_price: 0 }],
     status: o.status,
     note: o.note,
+    paid_amount: o.paid_amount,
     expected_updated_at: o.updated_at,
   }
 }
@@ -64,7 +69,7 @@ export function OrderFormPage() {
 
   const form = useForm<OrderInput>({
     resolver: zodResolver(orderInputSchema),
-    defaultValues: { group_id: '', customer: emptyCustomer, items: [{ size: '', quantity: 1, unit_price: 0 }], status: 'pending', note: '' },
+    defaultValues: { group_id: '', customer: emptyCustomer, items: [{ size: '', quantity: 1, unit_price: 0 }], status: 'pending', note: '', paid_amount: 0 },
   })
   const { errors, isDirty } = form.formState
   const items = useFieldArray({ control: form.control, name: 'items' })
@@ -86,6 +91,8 @@ export function OrderFormPage() {
   const groupId = useWatch({ control: form.control, name: 'group_id' })
   const watchedItems = useWatch({ control: form.control, name: 'items' })
   const total = (watchedItems ?? []).reduce((s, i) => s + (Number(i?.quantity) || 0) * (Number(i?.unit_price) || 0), 0)
+  const paid = useWatch({ control: form.control, name: 'paid_amount' }) ?? 0
+  const due = Math.max(0, total - paid)
   const selectableGroups = useMemo(
     () => (groups.data ?? []).filter((g) => g.status === 'open' || g.id === order.data?.group_id),
     [groups.data, order.data],
@@ -164,7 +171,13 @@ export function OrderFormPage() {
           </FormSection>
 
           <FormSection title="Khách hàng" description="Nhập SĐT trước — khách cũ sẽ được gợi ý thông tin.">
-            <CustomerFields form={form} groupId={groupId} orderId={id} groupName={selectedGroup?.name} />
+            <CustomerFields
+              form={form}
+              groupId={groupId}
+              orderId={id}
+              groupName={selectedGroup?.name}
+              editing={order.data ? { customerId: order.data.customer_id, status: order.data.status } : undefined}
+            />
           </FormSection>
         </div>
 
@@ -234,6 +247,59 @@ export function OrderFormPage() {
                 <span className="text-sm text-muted-foreground">Tổng tiền</span>
                 <span className="text-xl font-bold tabular-nums">{formatVND(total)}</span>
               </div>
+              <Field
+                label="Đã cọc / chuyển khoản"
+                htmlFor="paid_amount"
+                error={errors.paid_amount?.message}
+                hint="Tiền khách đã trả trước. Khi gửi GHN, tiền thu hộ (COD) tự lấy phần còn lại."
+              >
+                <div className="grid gap-2">
+                  <Controller
+                    control={form.control}
+                    name="paid_amount"
+                    render={({ field }) => (
+                      <MoneyInput
+                        id="paid_amount"
+                        value={field.value ?? 0}
+                        onChange={field.onChange}
+                        onBlur={field.onBlur}
+                        aria-invalid={!!errors.paid_amount}
+                      />
+                    )}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant={paid === 0 ? 'secondary' : 'outline'}
+                      size="sm"
+                      onClick={() => form.setValue('paid_amount', 0, { shouldDirty: true, shouldValidate: true })}
+                    >
+                      Chưa trả
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={total > 0 && paid === total ? 'secondary' : 'outline'}
+                      size="sm"
+                      disabled={!total}
+                      onClick={() => form.setValue('paid_amount', total, { shouldDirty: true, shouldValidate: true })}
+                    >
+                      Đã trả đủ
+                    </Button>
+                  </div>
+                </div>
+              </Field>
+              <div className="flex items-center justify-between rounded-lg border px-3 py-2.5">
+                <span className="text-sm text-muted-foreground">Còn phải thu</span>
+                <span className={cn('text-lg font-bold tabular-nums', due === 0 && 'text-emerald-700')}>
+                  {due === 0 && total > 0 ? 'Đã thanh toán đủ' : formatVND(due)}
+                </span>
+              </div>
+              {order.data && isActiveShipment(order.data) && order.data.ghn_cod_amount !== due && (
+                <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  Đơn đã gửi GHN với thu hộ <b>{formatVND(order.data.ghn_cod_amount)}</b>. Lưu ở đây không đổi COD trên GHN —
+                  sửa trên trang GHN, hoặc hủy vận đơn rồi tạo lại.
+                </p>
+              )}
               <Field label="Trạng thái đơn" htmlFor="status">
                 <Controller
                   control={form.control}
@@ -261,8 +327,8 @@ export function OrderFormPage() {
 
       <StickyFormBar>
         <div className="min-w-0 flex-1 md:hidden">
-          <div className="text-xs text-muted-foreground">Tổng tiền</div>
-          <div className="truncate text-lg font-bold tabular-nums">{formatVND(total)}</div>
+          <div className="text-xs text-muted-foreground">{paid > 0 ? `Tổng ${formatVND(total)} · còn thu` : 'Tổng tiền'}</div>
+          <div className="truncate text-lg font-bold tabular-nums">{formatVND(paid > 0 ? due : total)}</div>
         </div>
         <Button type="button" variant="outline" className="hidden md:inline-flex" onClick={() => navigate(backTo)}>
           Hủy
@@ -281,12 +347,15 @@ function CustomerFields({
   groupId,
   orderId,
   groupName,
+  editing,
 }: {
   form: ReturnType<typeof useForm<OrderInput>>
   groupId: string
   /** Đơn đang sửa — không tính là trùng với chính nó. */
   orderId?: string
   groupName?: string
+  /** Khi sửa đơn: không tính chính đơn này vào lịch sử hoàn/hủy của khách. */
+  editing?: { customerId: string; status: OrderStatus }
 }) {
   const { errors } = form.formState
   const phone = useWatch({ control: form.control, name: 'customer.phone' }) ?? ''
@@ -318,6 +387,9 @@ function CustomerFields({
       setAutoFilledId(found.id)
     }
   }, [found])
+
+  const history =
+    found && editing?.customerId === found.id ? historyExcluding(found.history, editing.status) : found?.history
 
   const differs =
     found &&
@@ -368,6 +440,7 @@ function CustomerFields({
           )}
         </div>
       )}
+      <CustomerRiskBanner history={history} />
       <Field label="Tên khách hàng" htmlFor="customer_name" required error={errors.customer?.name?.message}>
         <Input id="customer_name" autoComplete="off" aria-invalid={!!errors.customer?.name} {...form.register('customer.name')} />
       </Field>

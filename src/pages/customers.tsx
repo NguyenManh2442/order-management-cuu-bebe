@@ -4,6 +4,7 @@ import { Link } from 'react-router'
 import { toast } from 'sonner'
 import type { CustomerSummary } from '@shared/types'
 import { PhoneLink } from '@/components/contact-links'
+import { CustomerRiskBadge } from '@/components/customer-risk'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, ErrorState, ListSkeleton } from '@/components/states'
 import { Button } from '@/components/ui/button'
@@ -48,13 +49,16 @@ export function CustomersPage() {
       ) : (
         <ul className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
           {filtered.slice(0, PAGE).map((c) => (
-            <li key={c.id} className="relative flex items-center gap-3 rounded-xl border bg-card p-3 shadow-xs hover:bg-secondary/40">
+            <li key={c.id} className="relative flex min-w-0 items-center gap-3 rounded-xl border bg-card p-3 shadow-xs hover:bg-secondary/40">
               <Link to={`/customers/${c.id}`} className="absolute inset-0 rounded-xl" aria-label={`Xem khách ${c.name}`} />
               <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-secondary font-semibold">
                 {c.name.trim().split(/\s+/).at(-1)?.[0]?.toUpperCase()}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="truncate font-medium">{c.name}</div>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate font-medium">{c.name}</span>
+                  <CustomerRiskBadge history={c.history} className="shrink-0" />
+                </div>
                 <div className="flex flex-wrap items-center gap-x-3 text-sm">
                   <PhoneLink phone={c.phone} />
                   <span className="text-muted-foreground">

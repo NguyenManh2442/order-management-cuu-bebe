@@ -1,18 +1,32 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { OrderStatus } from '../shared/constants'
+import { emptyHistory, historyByCustomer, historyExcluding } from '../shared/customer-history'
+import { ghnTrackingUrl, isActiveShipment } from '../shared/ghn'
 import { normalizePhone, normalizeSize, normalizeUrl } from '../shared/phone'
-import type { CustomerInput, GroupInput, OrderInput, OrderStatusInput } from '../shared/schemas'
-import { computeGroupStats, summarizeItems } from '../shared/stats'
+import { COST_CATEGORIES } from '../shared/constants'
 import type {
+  BulkOrderStatusInput,
+  CustomerInput,
+  GroupCostInput,
+  GroupInput,
+  OrderInput,
+  OrderStatusInput,
+} from '../shared/schemas'
+import { OPEN_ORDER_STATUSES, amountDue, computeGroupStats, summarizeItems } from '../shared/stats'
+import type {
+  BulkStatusResult,
   Customer,
   CustomerDetail,
+  CustomerLookup,
   CustomerSummary,
+  GroupCost,
   GroupDetail,
   GroupWithStats,
   Order,
   OrderGroup,
   OrderItem,
   OrderView,
+  PublicOrderView,
 } from '../shared/types'
 import { AppError, conflict, notFound } from './errors'
 import { Mutex } from './mutex'
@@ -56,6 +70,14 @@ export const EMPTY_GHN_FIELDS = {
   ghn_draft: '',
 } satisfies Partial<Order>
 
+/** Mã link tra cứu: 128 bit ngẫu nhiên, base64url 22 ký tự — không đoán được. */
+const PUBLIC_TOKEN_RE = /^[A-Za-z0-9_-]{22}$/
+
+/** 0912345678 → 091****678 */
+export function maskPhone(phone: string): string {
+  return phone.length >= 7 ? `${phone.slice(0, 3)}${'*'.repeat(phone.length - 6)}${phone.slice(-3)}` : '***'
+}
+
 export class OrderService {
   constructor(
     private store: DataStore,
@@ -70,6 +92,7 @@ export class OrderService {
   private buildViews(snap: Snapshot, orders: Order[]): OrderView[] {
     const customers = new Map(snap.customers.map((c) => [c.id, c]))
     const groups = new Map(snap.groups.map((g) => [g.id, g]))
+    const history = historyByCustomer(snap.orders)
     const items = new Map<string, OrderItem[]>()
     for (const it of snap.items) {
       const list = items.get(it.order_id)
@@ -82,6 +105,7 @@ export class OrderService {
         customer: customers.get(o.customer_id) ?? missingCustomer(o.customer_id),
         items: items.get(o.id) ?? [],
         group_name: groups.get(o.group_id)?.name ?? '(Nhóm đã bị xóa)',
+        customer_history: historyExcluding(history.get(o.customer_id), o.status),
       }))
       .sort(byNewest)
   }
@@ -105,7 +129,14 @@ export class OrderService {
     const snap = await this.store.snapshot()
     const group = snap.groups.find((g) => g.id === id)
     if (!group) throw notFound('nhóm đơn hàng')
-    return { group, orders: this.buildViews(snap, snap.orders.filter((o) => o.group_id === id)) }
+    const costs = snap.costs
+      .filter((c) => c.group_id === id)
+      .sort((a, b) =>
+        a.category === b.category
+          ? a.created_at.localeCompare(b.created_at)
+          : COST_CATEGORIES.indexOf(a.category) - COST_CATEGORIES.indexOf(b.category),
+      )
+    return { group, orders: this.buildViews(snap, snap.orders.filter((o) => o.group_id === id)), costs }
   }
 
   async listOrders(): Promise<OrderView[]> {
@@ -122,6 +153,7 @@ export class OrderService {
 
   async listCustomers(): Promise<CustomerSummary[]> {
     const snap = await this.store.snapshot()
+    const history = historyByCustomer(snap.orders)
     const stats = new Map<string, { count: number; last: string }>()
     for (const o of snap.orders) {
       const s = stats.get(o.customer_id) ?? { count: 0, last: '' }
@@ -130,7 +162,12 @@ export class OrderService {
       stats.set(o.customer_id, s)
     }
     return snap.customers
-      .map((c) => ({ ...c, order_count: stats.get(c.id)?.count ?? 0, last_order_at: stats.get(c.id)?.last || null }))
+      .map((c) => ({
+        ...c,
+        history: history.get(c.id) ?? emptyHistory(),
+        order_count: stats.get(c.id)?.count ?? 0,
+        last_order_at: stats.get(c.id)?.last || null,
+      }))
       .sort((a, b) => (b.last_order_at ?? b.created_at).localeCompare(a.last_order_at ?? a.created_at))
   }
 
@@ -141,10 +178,50 @@ export class OrderService {
     return { customer, orders: this.buildViews(snap, snap.orders.filter((o) => o.customer_id === id)) }
   }
 
-  async findCustomerByPhone(phone: string): Promise<Customer | null> {
+  async findCustomerByPhone(phone: string): Promise<CustomerLookup | null> {
     const key = normalizePhone(phone)
     const snap = await this.store.snapshot()
-    return snap.customers.find((c) => c.phone === key) ?? null
+    const customer = snap.customers.find((c) => c.phone === key)
+    if (!customer) return null
+    const history = historyByCustomer(snap.orders.filter((o) => o.customer_id === customer.id)).get(customer.id)
+    return { ...customer, history: history ?? emptyHistory() }
+  }
+
+  /**
+   * Trang tra cứu cho khách (không cần đăng nhập): trạng thái, sản phẩm, tiền, vận đơn và địa chỉ giao hàng;
+   * SĐT che bớt. Ai có link đều xem được địa chỉ — "Đổi link" để vô hiệu link đã lộ.
+   */
+  async getPublicOrder(token: string): Promise<PublicOrderView> {
+    if (!PUBLIC_TOKEN_RE.test(token)) throw notFound('đơn hàng')
+    const snap = await this.store.snapshot()
+    const order = snap.orders.find((o) => o.public_token === token)
+    if (!order) throw notFound('đơn hàng')
+    const customer = snap.customers.find((c) => c.id === order.customer_id)
+    const shipped = isActiveShipment(order)
+    const amount_due = !OPEN_ORDER_STATUSES.includes(order.status) ? 0 : shipped ? order.ghn_cod_amount : amountDue(order)
+    return {
+      order_code: order.order_code,
+      created_at: order.created_at,
+      status: order.status,
+      group_name: snap.groups.find((g) => g.id === order.group_id)?.name ?? '',
+      customer_name: customer?.name ?? '',
+      customer_phone_masked: customer ? maskPhone(customer.phone) : '',
+      delivery_address: (shipped && order.ghn_to_address) || customer?.address || '',
+      items: snap.items
+        .filter((i) => i.order_id === order.id)
+        .map(({ product_name, size, quantity, unit_price, line_total }) => ({ product_name, size, quantity, unit_price, line_total })),
+      total_amount: order.total_amount,
+      paid_amount: order.paid_amount,
+      amount_due,
+      shipment: shipped
+        ? {
+            code: order.ghn_order_code,
+            status: order.ghn_status,
+            expected_delivery: order.ghn_expected_delivery,
+            tracking_url: ghnTrackingUrl(order.ghn_order_code),
+          }
+        : null,
+    }
   }
 
   // ---------- Ghi (tuần tự, luôn đọc dữ liệu mới nhất trước khi ghi) ----------
@@ -170,6 +247,41 @@ export class OrderService {
     })
   }
 
+  // ---------- Chi phí của nhóm ----------
+
+  createCost(groupId: string, input: GroupCostInput): Promise<GroupCost> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      if (!snap.groups.some((g) => g.id === groupId)) throw notFound('nhóm đơn hàng')
+      const now = this.clock().toISOString()
+      const cost: GroupCost = { id: randomUUID(), group_id: groupId, ...costFields(input), created_at: now, updated_at: now }
+      await this.store.insert('costs', [cost])
+      return cost
+    })
+  }
+
+  updateCost(groupId: string, costId: string, input: GroupCostInput): Promise<GroupCost> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const current = snap.costs.find((c) => c.id === costId && c.group_id === groupId)
+      if (!current) throw notFound('khoản chi')
+      assertFresh(current.updated_at, input.expected_updated_at, 'Khoản chi')
+      const cost: GroupCost = { ...current, ...costFields(input), updated_at: this.clock().toISOString() }
+      await this.store.update('costs', cost)
+      return cost
+    })
+  }
+
+  deleteCost(groupId: string, costId: string, expectedUpdatedAt?: string): Promise<void> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const current = snap.costs.find((c) => c.id === costId && c.group_id === groupId)
+      if (!current) throw notFound('khoản chi')
+      assertFresh(current.updated_at, expectedUpdatedAt, 'Khoản chi')
+      await this.store.remove('costs', [costId])
+    })
+  }
+
   createOrder(input: OrderInput): Promise<OrderView> {
     return this.writeLock.run(async () => {
       const snap = await this.store.snapshot(true)
@@ -182,6 +294,7 @@ export class OrderService {
       const customer = await this.upsertCustomer(snap, input.customer, now)
       const id = randomUUID()
       const items = buildItems(input, id, group, now)
+      const total = items.reduce((s, i) => s + i.line_total, 0)
       const order: Order = {
         id,
         order_code: nextOrderCode(
@@ -191,17 +304,20 @@ export class OrderService {
         group_id: group.id,
         customer_id: customer.id,
         items_summary: summarizeItems(items),
-        total_amount: items.reduce((s, i) => s + i.line_total, 0),
+        total_amount: total,
         status: input.status,
         note: input.note.trim(),
         ...EMPTY_GHN_FIELDS,
+        paid_amount: input.paid_amount ?? 0,
+        public_token: '',
         created_at: now,
         updated_at: now,
       }
       // Ghi dòng sản phẩm trước: nếu ghi đơn lỗi thì chỉ còn dòng mồ côi (không hiện ở đâu), không có đơn thiếu sản phẩm.
       await this.store.insert('items', items)
       await this.store.insert('orders', [order])
-      return { ...order, customer, items, group_name: group.name }
+      const customer_history = historyByCustomer(snap.orders).get(customer.id) ?? emptyHistory()
+      return { ...order, customer, items, group_name: group.name, customer_history }
     })
   }
 
@@ -217,15 +333,22 @@ export class OrderService {
         throw new AppError(400, `Nhóm "${group.name}" đã đóng, không thể chuyển đơn vào.`)
       }
 
+      const items = buildItems(input, id, group, this.clock().toISOString())
+      const total = items.reduce((s, i) => s + i.line_total, 0)
+      // Giao diện bản cũ (không có ô tiền cọc) không gửi paid_amount: giữ số cũ nhưng không vượt tổng mới,
+      // vì người dùng bản đó không có cách nào sửa lại số tiền đã trả.
+      const paid = input.paid_amount ?? Math.min(current.paid_amount, total)
+      if (paid > total) throw new AppError(400, 'Số tiền khách đã trả lớn hơn tổng đơn mới. Sửa lại số tiền đã trả.')
+
       const now = this.clock().toISOString()
       const customer = await this.upsertCustomer(snap, input.customer, now)
-      const items = buildItems(input, id, group, now)
       const order: Order = {
         ...current,
         group_id: group.id,
         customer_id: customer.id,
         items_summary: summarizeItems(items),
-        total_amount: items.reduce((s, i) => s + i.line_total, 0),
+        total_amount: total,
+        paid_amount: paid,
         status: input.status,
         note: input.note.trim(),
         updated_at: now,
@@ -237,7 +360,9 @@ export class OrderService {
       )
       await this.store.insert('items', items)
       await this.store.update('orders', order)
-      return { ...order, customer, items, group_name: group.name }
+      const others = snap.orders.filter((o) => o.id !== id)
+      const customer_history = historyByCustomer(others).get(customer.id) ?? emptyHistory()
+      return { ...order, customer, items, group_name: group.name, customer_history }
     })
   }
 
@@ -251,6 +376,48 @@ export class OrderService {
       const order: Order = { ...current, status: input.status as OrderStatus, updated_at: this.clock().toISOString() }
       await this.store.update('orders', order)
       return order
+    })
+  }
+
+  /**
+   * Đổi trạng thái nhiều đơn trong một lần ghi. Đơn bị người khác sửa trong lúc đó
+   * hoặc không còn tồn tại thì bỏ qua (báo lại), các đơn còn lại vẫn được đổi.
+   */
+  bulkUpdateStatus(input: BulkOrderStatusInput): Promise<BulkStatusResult> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const byId = new Map(snap.orders.map((o) => [o.id, o]))
+      const now = this.clock().toISOString()
+      const changed: Order[] = []
+      const skipped: BulkStatusResult['skipped'] = []
+      for (const { id, expected_updated_at } of input.orders) {
+        const current = byId.get(id)
+        if (!current) {
+          skipped.push({ id, order_code: '', reason: 'Đơn không còn tồn tại' })
+        } else if (expected_updated_at && expected_updated_at !== current.updated_at) {
+          skipped.push({ id, order_code: current.order_code, reason: 'Vừa được người khác cập nhật' })
+        } else if (current.status !== input.status && !changed.some((o) => o.id === id)) {
+          changed.push({ ...current, status: input.status, updated_at: now })
+        }
+      }
+      await this.store.updateMany('orders', changed)
+      return { updated: changed.length, skipped }
+    })
+  }
+
+  /**
+   * Lấy (hoặc đổi) mã link tra cứu đơn cho khách. Không đổi updated_at: tạo link không phải sửa đơn,
+   * người khác đang mở form sửa đơn không bị báo xung đột.
+   */
+  publicLink(id: string, regenerate: boolean): Promise<{ token: string }> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const current = snap.orders.find((o) => o.id === id)
+      if (!current) throw notFound('đơn hàng')
+      if (current.public_token && !regenerate) return { token: current.public_token }
+      const token = randomBytes(16).toString('base64url')
+      await this.store.update('orders', { ...current, public_token: token })
+      return { token }
     })
   }
 
@@ -324,6 +491,18 @@ export class OrderService {
 
 function assertFresh(actual: string, expected: string | undefined, what: string) {
   if (expected && expected !== actual) throw conflict(what)
+}
+
+function costFields(input: GroupCostInput) {
+  return {
+    category: input.category,
+    name: input.name.trim(),
+    quantity: input.quantity,
+    unit: input.unit.trim(),
+    unit_price: input.unit_price,
+    basis: input.basis,
+    note: input.note.trim(),
+  }
 }
 
 function groupFields(input: GroupInput) {
