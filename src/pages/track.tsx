@@ -45,7 +45,7 @@ export function TrackPage() {
   return (
     <div className="mx-auto min-h-dvh max-w-lg px-4 py-6">
       <header className="mb-5 text-center">
-        <div className="text-lg font-bold tracking-tight">Đơn Hàng Nhà Cừu</div>
+        <div className="text-2xl font-bold tracking-tight">Đơn Hàng Nhà Cừu</div>
         <div className="text-sm text-muted-foreground">Theo dõi đơn hàng của bạn</div>
       </header>
 
@@ -77,7 +77,7 @@ export function TrackPage() {
               <StatusBadge status={o.status} className="shrink-0" />
             </div>
             <div className="mt-2 text-sm">
-              {o.customer_name} · {o.customer_phone_masked}
+              <span className="text-base font-bold">{o.customer_name}</span> · {o.customer_phone_masked}
             </div>
             {o.delivery_address && (
               <p className="mt-1 flex gap-1.5 text-sm text-muted-foreground">
