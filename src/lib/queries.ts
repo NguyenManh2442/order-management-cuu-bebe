@@ -69,7 +69,7 @@ export const useCustomers = () =>
   useQuery({ queryKey: keys.customers, queryFn: () => api.get<CustomerSummary[]>('/customers') })
 
 export const useCustomer = (id: string) =>
-  useQuery({ queryKey: keys.customer(id), queryFn: () => api.get<CustomerDetail>(`/customers/${id}`) })
+  useQuery({ queryKey: keys.customer(id), queryFn: () => api.get<CustomerDetail>(`/customers/${id}`), enabled: !!id })
 
 export function lookupCustomerQuery(phone: string) {
   return {

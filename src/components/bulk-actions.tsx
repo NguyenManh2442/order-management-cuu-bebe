@@ -3,7 +3,7 @@ import { ChevronDown, Printer, Truck, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ORDER_STATUS_LABELS, type OrderStatus } from '@shared/constants'
-import { isActiveShipment } from '@shared/ghn'
+import { isActiveShipment, SHIPPABLE_STATUSES } from '@shared/ghn'
 import type { Order, OrderView } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -200,8 +200,6 @@ type GhnResult = { order: OrderView; ok: boolean; message: string }
  * Tạo vận đơn GHN cho nhiều đơn: chỉ đơn đã có địa chỉ GHN (khách cũ hoặc nháp đầy đủ).
  * Gửi lần lượt từng đơn qua đúng API tạo một vận đơn, nên mỗi đơn vẫn được kiểm tra như khi tạo tay.
  */
-/** Như nút "Tạo đơn GHN" trong danh sách: chỉ đơn còn ở giai đoạn chuẩn bị hàng. */
-const SHIPPABLE_STATUSES: OrderView['status'][] = ['pending', 'confirmed', 'packing']
 
 function BulkGhnDialog({ orders, onClose }: { orders: OrderView[]; onClose: (allOk: boolean) => void }) {
   const { data: config } = useConfig()

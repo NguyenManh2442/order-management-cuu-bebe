@@ -3,12 +3,29 @@ import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { PageHeader } from '@/components/page-header'
 import { EmptyState, ErrorState, ListSkeleton } from '@/components/states'
-import { SizeSummary } from '@/components/stats'
 import { GroupStatusBadge } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useGroups } from '@/lib/queries'
 import { cn, formatNumber, searchKey } from '@/lib/utils'
+
+/** Mỗi nhóm một màu cố định (theo id) để dễ phân biệt các block. */
+const GROUP_TONES = [
+  'border-l-blue-500 bg-blue-50',
+  'border-l-emerald-500 bg-emerald-50',
+  'border-l-amber-500 bg-amber-50',
+  'border-l-violet-500 bg-violet-50',
+  'border-l-rose-500 bg-rose-50',
+  'border-l-cyan-500 bg-cyan-50',
+  'border-l-lime-500 bg-lime-50',
+  'border-l-orange-500 bg-orange-50',
+]
+
+function groupTone(id: string) {
+  let h = 0
+  for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0
+  return GROUP_TONES[h % GROUP_TONES.length]
+}
 
 export function GroupsPage() {
   const { data: groups, isPending, error, refetch } = useGroups()
@@ -78,8 +95,8 @@ export function GroupsPage() {
               <Link
                 to={`/groups/${g.id}`}
                 className={cn(
-                  'flex h-full min-w-0 flex-col rounded-xl border bg-card p-4 shadow-xs transition-colors hover:bg-secondary/40',
-                  g.status === 'closed' && 'bg-muted/50',
+                  'flex h-full min-w-0 flex-col rounded-xl border border-l-4 p-4 shadow-xs transition hover:brightness-[0.97]',
+                  g.status === 'closed' ? 'border-l-slate-300 bg-muted/50' : groupTone(g.id),
                 )}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -90,17 +107,16 @@ export function GroupsPage() {
                   <GroupStatusBadge status={g.status} />
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2 text-sm">
-                  <span className="rounded-md bg-blue-50 px-2 py-0.5 text-blue-800">
+                  <span className="rounded-md bg-white/80 px-2 py-0.5 text-blue-800">
                     <b className="tabular-nums">{formatNumber(g.stats.order_count)}</b> đơn
                   </span>
-                  <span className="rounded-md bg-amber-50 px-2 py-0.5 text-amber-800">
+                  <span className="rounded-md bg-white/80 px-2 py-0.5 text-amber-800">
                     <b className="tabular-nums">{formatNumber(g.stats.item_count)}</b> sản phẩm
                   </span>
-                  <span className="rounded-md bg-violet-50 px-2 py-0.5 text-violet-800">
+                  <span className="rounded-md bg-white/80 px-2 py-0.5 text-violet-800">
                     <b className="tabular-nums">{formatNumber(g.stats.customer_count)}</b> khách
                   </span>
                 </div>
-                <SizeSummary sizes={g.stats.sizes} className="mt-1" />
                 <span className="mt-3 flex items-center justify-end gap-1 text-sm font-medium">
                   Xem chi tiết <ChevronRight className="size-4" />
                 </span>

@@ -223,3 +223,194 @@ describe('nháp GHN', () => {
     await expect(shipping.saveDraft(order.id, { street: 'x' })).rejects.toThrow(/đã có vận đơn/)
   })
 })
+
+describe('gửi chung một vận đơn (nhiều đơn của cùng khách)', () => {
+  async function setupBundle() {
+    const base = await setup()
+    const g2 = await base.orders.createGroup({ name: 'Áo', description: '', product_name: 'Áo dài', default_unit_price: 0, status: 'open' })
+    const second = await base.orders.createOrder({
+      group_id: g2.id,
+      customer: { name: 'Lan', phone: '0912345678', facebook_url: '', address: '' },
+      items: [{ size: 'S', quantity: 1, unit_price: 200000 }],
+      status: 'pending',
+      note: '',
+      paid_amount: 50000,
+    })
+    return { ...base, second }
+  }
+
+  it('tạo một vận đơn cho cả gói: COD tổng, mỗi đơn giữ phần còn thu của mình, phí chỉ ở đơn chính', async () => {
+    const { orders, shipping, ghn, order, second } = await setupBundle()
+    const main = await shipping.createShipment(
+      order.id,
+      shipment({ cod_amount: 450000, bundle: [{ id: second.id, expected_updated_at: second.updated_at }] }),
+    )
+    expect(ghn.created).toHaveLength(1)
+    const sent = ghn.created[0]
+    expect(sent.cod_amount).toBe(450000)
+    expect(sent.items.map((i) => i.code)).toEqual(['M', 'S'])
+    expect(sent.order_value).toBe(500000)
+    expect(sent.content).toContain(`Gồm đơn ${order.order_code}, ${second.order_code}`)
+
+    const companion = await orders.getOrder(second.id)
+    expect(companion.ghn_order_code).toBe(main.ghn_order_code)
+    expect(companion.status).toBe('packing')
+    expect(companion.ghn_cod_amount).toBe(150000) // 200.000 - cọc 50.000
+    expect(companion.ghn_fee).toBe(0)
+    expect(main.ghn_cod_amount).toBe(300000)
+    expect((await orders.getOrder(order.id)).ghn_bundle).toEqual([second.order_code])
+    expect(companion.ghn_bundle).toEqual([order.order_code])
+  })
+
+  it('đồng bộ / webhook cập nhật mọi đơn trong gói, COD tổng không làm lệch phần từng đơn', async () => {
+    const { orders, shipping, order, second } = await setupBundle()
+    const main = await shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))
+    await shipping.syncShipment(second.id) // giả lập: picking
+    await shipping.syncShipment(order.id) // picked
+    for (const id of [order.id, second.id]) {
+      const o = await orders.getOrder(id)
+      expect(o.ghn_status).toBe('picked')
+      expect(o.status).toBe('shipping')
+    }
+    expect((await orders.getOrder(order.id)).ghn_cod_amount).toBe(300000)
+    expect((await orders.getOrder(second.id)).ghn_cod_amount).toBe(150000)
+
+    await shipping.handleWebhook({ OrderCode: main.ghn_order_code, Type: 'switch_status', Status: 'delivered', Time: '2030-01-01T00:00:00Z', CODAmount: 450000 })
+    expect((await orders.getOrder(second.id)).status).toBe('delivered')
+    expect((await orders.getOrder(order.id)).status).toBe('delivered')
+
+    // Shop sửa COD trên GHN: phần chênh lệch tính vào đơn chính.
+    await shipping.handleWebhook({ OrderCode: main.ghn_order_code, Type: 'update_cod', CODAmount: 400000 })
+    expect((await orders.getOrder(order.id)).ghn_cod_amount).toBe(250000)
+    expect((await orders.getOrder(second.id)).ghn_cod_amount).toBe(150000)
+  })
+
+  it('hủy vận đơn từ đơn gửi kèm thì hủy cả gói; đồng bộ tất cả chỉ hỏi GHN một lần', async () => {
+    const { orders, shipping, order, second } = await setupBundle()
+    await shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))
+    const r = await shipping.syncAll()
+    expect(r.checked).toBe(1)
+    expect(r.updated).toBe(2)
+
+    await shipping.cancelShipment(second.id)
+    for (const id of [order.id, second.id]) {
+      const o = await orders.getOrder(id)
+      expect(o.ghn_status).toBe('cancel')
+      expect(o.status).toBe('confirmed')
+      expect(o.ghn_bundle).toEqual([])
+    }
+  })
+
+  it('từ chối: COD thiếu phần đơn gửi kèm, khác khách, đơn đã có vận đơn, đơn vừa bị sửa', async () => {
+    const { orders, shipping, ghn, order, second } = await setupBundle()
+    await expect(shipping.createShipment(order.id, shipment({ cod_amount: 100000, bundle: [{ id: second.id }] }))).rejects.toThrow(
+      /ít nhất 150\.000/,
+    )
+    await expect(
+      shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id, expected_updated_at: 'cu' }] })),
+    ).rejects.toThrow(/vừa được sửa/)
+
+    const other = await orders.createOrder({
+      group_id: order.group_id,
+      customer: { name: 'Mai', phone: '0987654321', facebook_url: '', address: '' },
+      items: [{ size: 'L', quantity: 1, unit_price: 100000 }],
+      status: 'confirmed',
+      note: '',
+    })
+    await expect(shipping.createShipment(order.id, shipment({ bundle: [{ id: other.id }] }))).rejects.toThrow(/không cùng khách/)
+
+    await shipping.createShipment(second.id, shipment({ cod_amount: 150000 }))
+    await expect(shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))).rejects.toThrow(
+      /đã có vận đơn/,
+    )
+    expect(ghn.created).toHaveLength(1)
+    expect((await orders.getOrder(order.id)).ghn_order_code).toBe('')
+  })
+})
+
+describe('trang tra cứu của đơn gửi chung', () => {
+  it('hiện sản phẩm của các đơn cùng gói (không lộ mã đơn), tiền phải trả là tổng cả gói', async () => {
+    const base = await setup()
+    const g2 = await base.orders.createGroup({ name: 'Áo', description: '', product_name: 'Áo dài', default_unit_price: 0, status: 'open' })
+    const second = await base.orders.createOrder({
+      group_id: g2.id,
+      customer: { name: 'Lan', phone: '0912345678', facebook_url: '', address: '' },
+      items: [{ size: 'S', quantity: 1, unit_price: 200000 }],
+      status: 'pending',
+      note: '',
+      paid_amount: 50000,
+    })
+    await base.shipping.createShipment(base.order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))
+    const { token } = await base.orders.publicLink(second.id, false)
+    const view = await base.orders.getPublicOrder(token)
+    expect(view.amount_due).toBe(450000)
+    expect(view.bundled_orders).toEqual([
+      { group_name: 'Váy', items: [expect.objectContaining({ size: 'M', quantity: 2 })], total_amount: 300000, paid_amount: 0 },
+    ])
+    expect(JSON.stringify(view)).not.toContain(base.order.order_code)
+  })
+})
+
+describe('gửi chung — các trường hợp biên', () => {
+  async function bundled() {
+    const base = await setup()
+    const second = await base.orders.createOrder({
+      group_id: base.order.group_id,
+      customer: { name: 'Lan', phone: '0912345678', facebook_url: '', address: '' },
+      items: [{ size: 'S', quantity: 1, unit_price: 200000 }],
+      status: 'pending',
+      note: '',
+      paid_amount: 50000,
+    })
+    return { ...base, second }
+  }
+
+  it('không cho xóa đơn đang gửi chung (tiền các đơn còn lại sẽ lệch)', async () => {
+    const { orders, shipping, order, second } = await bundled()
+    await shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))
+    await expect(orders.deleteOrder(order.id)).rejects.toThrow(/gửi chung vận đơn/)
+    await expect(orders.deleteOrder(second.id)).rejects.toThrow(/gửi chung vận đơn/)
+    await shipping.cancelShipment(order.id)
+    await orders.deleteOrder(second.id) // hủy vận đơn rồi thì xóa được
+  })
+
+  it('trang tra cứu không tính tiền / không hiện đơn cùng gói đã bị hủy trong app', async () => {
+    const { orders, shipping, order, second } = await bundled()
+    await shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))
+    await orders.updateOrderStatus(second.id, { status: 'cancelled' })
+    const { token } = await orders.publicLink(order.id, false)
+    const view = await orders.getPublicOrder(token)
+    expect(view.amount_due).toBe(300000)
+    expect(view.bundled_orders).toEqual([])
+  })
+
+  it('webhook cứu vận đơn (GHN đã tạo, app chưa kịp lưu) gắn mã cho cả đơn gửi kèm', async () => {
+    const { orders, shipping, ghn, order, second } = await bundled()
+    // Giả lập: GHN tạo xong nhưng lưu vào Sheets thất bại.
+    const store = (shipping as unknown as { store: { updateMany: (...a: unknown[]) => Promise<void> } }).store
+    const original = store.updateMany.bind(store)
+    let calls = 0
+    store.updateMany = async (...a: unknown[]) => {
+      if (++calls === 2) throw new Error('Sheets lỗi')
+      return original(...a)
+    }
+    await expect(shipping.createShipment(order.id, shipment({ cod_amount: 450000, bundle: [{ id: second.id }] }))).rejects.toThrow()
+    store.updateMany = original
+    const code = (await ghn.create.call(ghn, ghn.created[0])).order_code // vận đơn mà GHN đã tạo
+    await shipping.handleWebhook({
+      OrderCode: code,
+      ClientOrderCode: order.order_code,
+      Type: 'create',
+      Status: 'ready_to_pick',
+      Time: '2026-12-02T01:00:00Z',
+      CODAmount: 450000,
+    })
+    const main = await orders.getOrder(order.id)
+    const comp = await orders.getOrder(second.id)
+    expect(main.ghn_order_code).toBe(code)
+    expect(comp.ghn_order_code).toBe(code)
+    expect(comp.ghn_cod_amount).toBe(150000)
+    expect(main.ghn_cod_amount).toBe(300000)
+    expect(comp.status).toBe('packing')
+  })
+})

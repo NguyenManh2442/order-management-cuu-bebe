@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { COST_BASES, COST_CATEGORIES, GROUP_STATUSES, MAX_ITEMS_PER_ORDER, ORDER_STATUSES } from './constants'
-import { GHN_REQUIRED_NOTES } from './ghn'
+import { GHN_REQUIRED_NOTES, MAX_BUNDLE_ORDERS } from './ghn'
 import { isValidPhone, isValidUrl } from './phone'
 
 const money = z
@@ -133,6 +133,11 @@ export const ghnShipmentInputSchema = z
     /** Lưu địa chỉ này vào khách để lần sau tự điền. */
     save_address: z.boolean(),
     expected_updated_at: z.string().optional(),
+    /** Đơn khác của cùng khách gửi chung vận đơn này (COD đã gồm phần còn thu của các đơn đó). */
+    bundle: z
+      .array(z.object({ id: z.string().min(1).max(100), expected_updated_at: z.string().optional() }))
+      .max(MAX_BUNDLE_ORDERS, `Gửi kèm tối đa ${MAX_BUNDLE_ORDERS} đơn`)
+      .optional(),
   })
   .superRefine((v, ctx) => {
     if (!v.is_new_address && v.district_id <= 0) {
@@ -160,6 +165,8 @@ export const ghnDraftSchema = z
     required_note: z.enum(GHN_REQUIRED_NOTES),
     note: z.string().max(1000),
     save_address: z.boolean(),
+    /** Đơn gửi kèm đã chọn. */
+    bundle_ids: z.array(z.string().max(100)).max(MAX_BUNDLE_ORDERS),
   })
   .partial()
 

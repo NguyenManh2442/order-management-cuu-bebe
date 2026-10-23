@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
-import { Calculator, CornerDownLeft, FileText, MapPin, Save, Send, Trash2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { Calculator, ChevronDown, CornerDownLeft, FileText, MapPin, PackagePlus, Save, Send, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
-import { formatGhnAddress, isActiveShipment, type GhnPlace } from '@shared/ghn'
-import { ghnShipmentInputSchema, type GhnShipmentInput } from '@shared/schemas'
+import { MAX_BUNDLE_ORDERS, bundleCandidates, formatGhnAddress, isActiveShipment, type GhnPlace } from '@shared/ghn'
+import { ghnShipmentInputSchema, type GhnDraft, type GhnShipmentInput } from '@shared/schemas'
 import { amountDue } from '@shared/stats'
+import type { OrderView } from '@shared/types'
 import { FormSection, MoneyInput, StickyFormBar, useUnsavedChangesGuard } from '@/components/form-helpers'
 import { GhnSettingsForm } from '@/components/ghn-settings-form'
 import { PageHeader } from '@/components/page-header'
@@ -23,6 +24,7 @@ import { PAYMENT_OPTIONS, REQUIRED_NOTE_OPTIONS } from '@/lib/ghn-options'
 import {
   useConfig,
   useCreateGhnShipment,
+  useCustomer,
   useGhnPreview,
   useGhnDistricts,
   useGhnOldProvinces,
@@ -33,7 +35,9 @@ import {
   useOrder,
   useSaveGhnDraft,
 } from '@/lib/queries'
-import { cn, formatDate, formatDateTime, formatVND } from '@/lib/utils'
+import { cn, formatDate, formatDateTime, formatNumber, formatVND } from '@/lib/utils'
+
+const itemCount = (o: OrderView) => o.items.reduce((s, i) => s + i.quantity, 0)
 
 const intValue = (v: string) => {
   const digits = v.replace(/\D/g, '').slice(0, 6)
@@ -50,6 +54,16 @@ export function OrderShipPage() {
   const create = useCreateGhnShipment(id)
   const saveDraft = useSaveGhnDraft(id)
   const settings = useGhnSettings(!!config && !ghn)
+  // Đơn khác của cùng khách (mọi nhóm) để chọn gửi chung một vận đơn.
+  const customer = useCustomer(order.data?.customer_id ?? '')
+  const candidates = useMemo(
+    () => (order.data && customer.data ? bundleCandidates(order.data, customer.data.orders) : []),
+    [order.data, customer.data],
+  )
+  /** Số đơn gửi kèm trong nháp nhưng nay không còn gửi được (đã gửi riêng, đã hủy…). */
+  const [staleBundle, setStaleBundle] = useState(0)
+  /** null = tự quyết: ít đơn thì mở sẵn, nhiều đơn thì thu gọn cho đỡ dài. */
+  const [bundleOpen, setBundleOpen] = useState<boolean | null>(null)
 
   const form = useForm<GhnShipmentInput>({ resolver: zodResolver(ghnShipmentInputSchema) })
   const { errors, isDirty } = form.formState
@@ -61,6 +75,11 @@ export function OrderShipPage() {
   const districtId = useWatch({ control: form.control, name: 'district_id' }) ?? 0
   const wardId = useWatch({ control: form.control, name: 'ward_id' }) ?? 0
   const street = useWatch({ control: form.control, name: 'street' }) ?? ''
+  const bundle = useWatch({ control: form.control, name: 'bundle' }) ?? []
+  const bundled = candidates.filter((c) => bundle.some((b) => b.id === c.id))
+  /** Đơn đã chọn gửi kèm nhưng vừa không còn gửi được (người khác vừa gửi riêng / đổi trạng thái) — tiền vẫn đang cộng trong COD. */
+  const lostBundle = (customer.data?.orders ?? []).filter((x) => bundle.some((b) => b.id === x.id) && !candidates.includes(x))
+  const bundleFull = bundle.length >= MAX_BUNDLE_ORDERS
 
   // Hệ mới: Tỉnh → Phường. Hệ cũ: Tỉnh → Quận/Huyện → Phường (mã khác nhau giữa hai hệ).
   const newProvinces = useGhnProvinces(!!ghn && isNew)
@@ -76,13 +95,17 @@ export function OrderShipPage() {
   /** Đang tự đoán tỉnh → quận → phường từ địa chỉ khách (dừng khi người dùng tự chọn). */
   const guessing = useRef(false)
   useEffect(() => {
-    if (initialized.current || !order.data || !ghn) return
+    // Chờ danh sách đơn của khách để khôi phục các đơn gửi kèm trong nháp.
+    if (initialized.current || !order.data || !ghn || (customer.isPending && !customer.error)) return
     const draft = readDraft(order.data.ghn_draft)
-    const values = { ...shipmentDefaults(order.data, ghn), ...draft?.values }
+    const { bundle_ids = [], ...draftValues } = draft?.values ?? {}
+    const valid = bundle_ids.filter((bid) => candidates.some((c) => c.id === bid))
+    setStaleBundle(bundle_ids.length - valid.length)
+    const values = { ...shipmentDefaults(order.data, ghn), ...draftValues, bundle: valid.map((bid) => ({ id: bid })) }
     form.reset(values)
     guessing.current = !draft && !values.province_id && !!order.data.customer.address
     initialized.current = true
-  }, [order.data, ghn, form])
+  }, [order.data, ghn, form, customer.isPending, customer.error, candidates])
 
   // Khách chưa có địa chỉ GHN: đoán dần từng cấp khi danh mục tải về.
   useEffect(() => {
@@ -109,6 +132,14 @@ export function OrderShipPage() {
     form.setValue('ward_id', 0, { shouldDirty: true })
     form.clearErrors(['province_id', 'district_id', 'ward_id'])
     guessing.current = !!order.data?.customer.address
+  }
+
+  /** Chọn / bỏ đơn gửi kèm: cộng / trừ phần còn thu vào COD (khối lượng người bán tự nhập). */
+  const toggleBundle = (c: OrderView, on: boolean) => {
+    const current = form.getValues('bundle') ?? []
+    form.setValue('bundle', on ? [...current, { id: c.id }] : current.filter((b) => b.id !== c.id), { shouldDirty: true })
+    const cod = form.getValues('cod_amount') ?? 0
+    form.setValue('cod_amount', Math.max(0, cod + (on ? 1 : -1) * amountDue(c)), { shouldDirty: true, shouldValidate: true })
   }
 
   // Đổi thông tin thì phí đã tính không còn đúng.
@@ -155,6 +186,7 @@ export function OrderShipPage() {
     )
   }
 
+  const showBundle = bundleOpen ?? candidates.length <= 2
   const province = provinces.data?.find((p) => p.id === provinceId)
   const ward = wards.data?.find((w) => w.id === wardId)
   const district = isNew ? undefined : districts.data?.find((d) => d.id === districtId)
@@ -169,7 +201,9 @@ export function OrderShipPage() {
   const draft = readDraft(o.ghn_draft)
   const onSaveDraft = () => {
     const values = form.getValues()
-    saveDraft.mutate(values, {
+    const { bundle: picked = [], expected_updated_at: _, ...rest } = values
+    const body: GhnDraft = { ...rest, bundle_ids: picked.map((b) => b.id) }
+    saveDraft.mutate(body, {
       onSuccess: () => {
         // Đã lưu: không còn là thay đổi chưa lưu nữa.
         form.reset(values)
@@ -181,7 +215,8 @@ export function OrderShipPage() {
   const onDiscardDraft = () =>
     saveDraft.mutate(null, {
       onSuccess: () => {
-        if (ghn) form.reset(shipmentDefaults(o, ghn))
+        if (ghn) form.reset({ ...shipmentDefaults(o, ghn), bundle: [] })
+        setStaleBundle(0)
         toast.success('Đã bỏ nháp')
       },
       onError: (err) => toast.error(errorMessage(err)),
@@ -195,10 +230,21 @@ export function OrderShipPage() {
   const onConfirmCreate = () => {
     if (!confirmValues) return
     create.mutate(
-      { ...confirmValues, expected_updated_at: o.updated_at },
+      {
+        ...confirmValues,
+        expected_updated_at: o.updated_at,
+        // Gửi đúng các đơn đã chọn (kể cả đơn vừa không còn hợp lệ — server sẽ từ chối và báo rõ, thay vì
+        // lặng lẽ bỏ đơn đó mà COD vẫn còn cộng tiền của nó). Kèm thời điểm sửa để phát hiện đơn vừa bị sửa.
+        bundle: bundle.map((b) => ({
+          id: b.id,
+          expected_updated_at: customer.data?.orders.find((x) => x.id === b.id)?.updated_at,
+        })),
+      },
       {
         onSuccess: (saved) => {
-          toast.success(`Đã tạo vận đơn GHN ${saved.ghn_order_code}`)
+          toast.success(
+            `Đã tạo vận đơn GHN ${saved.ghn_order_code}` + (bundle.length ? ` (gửi chung ${bundle.length + 1} đơn)` : ''),
+          )
           setConfirmValues(null)
           guard.allow()
           navigate(back, { replace: true })
@@ -242,6 +288,94 @@ export function OrderShipPage() {
             <Trash2 /> Bỏ nháp
           </Button>
         </div>
+      )}
+
+      {(candidates.length > 0 || staleBundle > 0 || lostBundle.length > 0) && (
+        <section className="mb-4 rounded-xl border border-violet-200 bg-violet-50/60 p-4">
+          <button
+            type="button"
+            className="flex w-full items-start justify-between gap-3 text-left"
+            aria-expanded={showBundle}
+            onClick={() => setBundleOpen(!showBundle)}
+          >
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 font-semibold text-violet-900">
+                <PackagePlus className="size-4 shrink-0" /> Gửi chung với đơn khác của khách
+              </span>
+              <span className="mt-0.5 block text-sm text-violet-900/80">
+                {bundled.length > 0 && (
+                  <b>
+                    Đã chọn {bundled.length} (+{formatVND(bundled.reduce((s, c) => s + amountDue(c), 0))})
+                  </b>
+                )}
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-violet-800">
+              {showBundle ? 'Thu gọn' : 'Xem'}
+              <ChevronDown className={cn('size-4 transition-transform', showBundle && 'rotate-180')} />
+            </span>
+          </button>
+          {staleBundle > 0 && (
+            <p className="mt-2 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
+              {staleBundle} đơn gửi kèm trong nháp không còn gửi được (đã gửi riêng hoặc đổi trạng thái) — kiểm tra lại tiền thu hộ.
+            </p>
+          )}
+          {lostBundle.length > 0 && (
+            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900">
+              <span>
+                <b className="font-mono">{lostBundle.map((x) => x.order_code).join(', ')}</b> vừa được gửi riêng hoặc đổi trạng thái — không
+                gửi kèm được nữa.
+              </span>
+              <Button type="button" variant="outline" size="sm" onClick={() => lostBundle.forEach((x) => toggleBundle(x, false))}>
+                Bỏ chọn & trừ tiền
+              </Button>
+            </div>
+          )}
+          {showBundle && bundleFull && (
+            <p className="mt-2 text-sm text-violet-900/80">Đã chọn tối đa {MAX_BUNDLE_ORDERS} đơn gửi kèm cho một vận đơn.</p>
+          )}
+          {showBundle && (
+            <ul className="mt-3 grid gap-2">
+              {candidates.map((c) => {
+                const checked = bundle.some((b) => b.id === c.id)
+                const otherAddress = !!c.customer.address && !!o.customer.address && c.customer.address !== o.customer.address
+                return (
+                  <li key={c.id}>
+                    <label
+                      className={cn(
+                        'flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3 text-sm transition-colors',
+                        checked ? 'border-violet-400 ring-1 ring-violet-400' : 'hover:bg-secondary/40',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 size-5 shrink-0 accent-violet-600"
+                        checked={checked}
+                        disabled={!checked && bundleFull}
+                        onChange={(e) => toggleBundle(c, e.target.checked)}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+                          <span>
+                            <b className="font-mono">{c.order_code}</b> · {c.group_name}
+                          </span>
+                          <span className="tabular-nums">
+                            còn thu <b>{formatVND(amountDue(c))}</b>
+                          </span>
+                        </span>
+                        <span className="block text-muted-foreground">
+                          {c.items_summary} · {formatNumber(itemCount(c))} sản phẩm
+                        </span>
+                        {c.note && <span className="block text-xs text-muted-foreground italic">Ghi chú: {c.note}</span>}
+                        {otherAddress && <span className="block text-xs text-amber-700">Lưu ý: đơn này ghi địa chỉ khác</span>}
+                      </span>
+                    </label>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </section>
       )}
 
       <div className="grid gap-4 pb-24 md:pb-0 lg:grid-cols-2 lg:items-start">
@@ -356,7 +490,6 @@ export function OrderShipPage() {
               label="Số nhà, tên đường"
               htmlFor="street"
               error={errors.street?.message}
-              hint="Không cần ghi lại phường, tỉnh — app tự ghép."
               required
             >
               <Input id="street" {...form.register('street')} aria-invalid={!!errors.street} />
@@ -382,9 +515,13 @@ export function OrderShipPage() {
                 htmlFor="cod"
                 error={errors.cod_amount?.message}
                 hint={
-                  o.paid_amount > 0
-                    ? `Tổng đơn ${formatVND(o.total_amount)}, khách đã trả ${formatVND(o.paid_amount)} → còn thu ${formatVND(amountDue(o))}.`
-                    : `Tổng đơn ${formatVND(o.total_amount)}. Nhập 0 nếu khách đã chuyển khoản.`
+                  bundled.length
+                    ? `Gồm ${o.order_code} ${formatVND(amountDue(o))}` +
+                      bundled.map((c) => ` + ${c.order_code} ${formatVND(amountDue(c))}`).join('') +
+                      ` = ${formatVND(bundled.reduce((s, c) => s + amountDue(c), amountDue(o)))}.`
+                    : o.paid_amount > 0
+                      ? `Tổng đơn ${formatVND(o.total_amount)}, khách đã trả ${formatVND(o.paid_amount)} → còn thu ${formatVND(amountDue(o))}.`
+                      : `Tổng đơn ${formatVND(o.total_amount)}. Nhập 0 nếu khách đã chuyển khoản.`
                 }
               >
                 <Controller
@@ -494,7 +631,11 @@ export function OrderShipPage() {
       <ConfirmDialog
         open={!!confirmValues}
         onOpenChange={(open) => !open && !create.isPending && setConfirmValues(null)}
-        title={`Tạo vận đơn GHN cho ${o.order_code}?`}
+        title={
+          bundled.length
+            ? `Tạo 1 vận đơn GHN cho ${bundled.length + 1} đơn?`
+            : `Tạo vận đơn GHN cho ${o.order_code}?`
+        }
         description={
           confirmValues && (
             <span className="grid gap-1 text-foreground">
@@ -502,6 +643,11 @@ export function OrderShipPage() {
                 <b>{confirmValues.to_name}</b> · {confirmValues.to_phone}
               </span>
               <span>{fullAddress}</span>
+              {bundled.length > 0 && (
+                <span>
+                  Gửi chung: <b className="font-mono">{[o, ...bundled].map((c) => c.order_code).join(', ')}</b>
+                </span>
+              )}
               <span>
                 Thu hộ: <b>{formatVND(confirmValues.cod_amount)}</b> · Phí GHN:{' '}
                 <b>{preview.data ? formatVND(preview.data.total_fee) : preview.isPending ? 'đang tính…' : 'chưa tính được'}</b>

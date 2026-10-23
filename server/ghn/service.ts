@@ -1,6 +1,7 @@
 import {
   GHN_CANCELLABLE_STATUSES,
   GHN_FINAL_STATUSES,
+  SHIPPABLE_STATUSES,
   formatGhnAddress,
   ghnStatusLabel,
   ghnToOrderStatus,
@@ -10,6 +11,7 @@ import {
   type GhnQuote,
 } from '../../shared/ghn'
 import type { GhnDraft, GhnShipmentInput } from '../../shared/schemas'
+import { amountDue } from '../../shared/stats'
 import type { Order, OrderItem } from '../../shared/types'
 import { AppError, conflict, notFound } from '../errors'
 import type { Mutex } from '../mutex'
@@ -84,6 +86,46 @@ export function applyGhnStatus(
     next.ghn_expected_delivery !== order.ghn_expected_delivery
   if (!changed) return null
   return { ...next, updated_at: now }
+}
+
+/**
+ * Đơn chính của một vận đơn gửi chung: đơn đã đặt client_order_code khi tạo.
+ * Các đơn gửi kèm lưu cùng client code nhưng mã đơn khác.
+ */
+function primaryOf(members: Order[]): Order {
+  return members.find((o) => o.ghn_client_code.replace(/-R\d+$/, '') === o.order_code) ?? members[0]
+}
+
+/**
+ * Áp trạng thái GHN cho mọi đơn cùng vận đơn. COD trên GHN là tổng cả gói: đơn gửi kèm giữ phần của mình,
+ * phần chênh lệch (nếu sửa COD trên GHN) tính vào đơn chính — để cảnh báo "thu hộ khác số còn phải thu" vẫn đúng từng đơn.
+ */
+export function applyGhnStatusToShipment(
+  members: Order[],
+  status: string,
+  at: string,
+  now: string,
+  extra: { cod_amount?: number; expected_delivery?: string } = {},
+): Order[] {
+  if (!members.length) return []
+  const primary = primaryOf(members)
+  const primaryCod = extra.cod_amount === undefined ? undefined : primaryCodShare(members, primary, extra.cod_amount)
+  return members.flatMap((o) => {
+    const cod = extra.cod_amount === undefined ? undefined : o === primary ? primaryCod : o.ghn_cod_amount
+    const next = applyGhnStatus(o, status, at, now, { ...extra, cod_amount: cod })
+    return next ? [next] : []
+  })
+}
+
+/** COD trên GHN là tổng cả gói: đơn gửi kèm giữ phần của mình, phần còn lại (kể cả chênh lệch khi sửa COD trên GHN) thuộc đơn chính. */
+function primaryCodShare(members: Order[], primary: Order, total: number): number {
+  const others = members.filter((o) => o !== primary).reduce((sum, o) => sum + o.ghn_cod_amount, 0)
+  return Math.max(0, total - others)
+}
+
+interface BundleEntry {
+  order: Order
+  items: OrderItem[]
 }
 
 export class ShippingService {
@@ -163,13 +205,47 @@ export class ShippingService {
     return { order, items }
   }
 
+  /** Mọi đơn đang dùng chung vận đơn của đơn này (gồm cả nó). */
+  private shipmentMembers(snap: Snapshot, order: Order): Order[] {
+    if (!order.ghn_order_code) return [order]
+    return snap.orders.filter((o) => o.ghn_order_code === order.ghn_order_code)
+  }
+
+  /**
+   * Đơn gửi kèm: cùng khách, còn ở giai đoạn chuẩn bị hàng, chưa có vận đơn.
+   * checkVersion = kiểm tra không ai sửa đơn kể từ lúc mở form (khi tạo vận đơn thật).
+   */
+  private loadBundle(snap: Snapshot, main: Order, input: GhnShipmentInput, checkVersion: boolean): BundleEntry[] {
+    const seen = new Set<string>([main.id])
+    return (input.bundle ?? []).map(({ id, expected_updated_at }) => {
+      if (seen.has(id)) throw new AppError(400, 'Đơn gửi kèm bị trùng.')
+      seen.add(id)
+      const order = snap.orders.find((o) => o.id === id)
+      if (!order) throw new AppError(404, 'Một đơn gửi kèm không còn tồn tại — tải lại trang rồi chọn lại.')
+      const code = order.order_code
+      if (order.customer_id !== main.customer_id) throw new AppError(400, `Đơn ${code} không cùng khách hàng, không gửi chung được.`)
+      if (isActiveShipment(order)) throw new AppError(409, `Đơn ${code} đã có vận đơn GHN ${order.ghn_order_code}.`)
+      if (!SHIPPABLE_STATUSES.includes(order.status)) throw new AppError(400, `Đơn ${code} không còn ở giai đoạn chuẩn bị hàng.`)
+      if (checkVersion && expected_updated_at && expected_updated_at !== order.updated_at) {
+        throw new AppError(409, `Đơn gửi kèm ${code} vừa được sửa — tải lại trang rồi thử lại.`)
+      }
+      return { order, items: snap.items.filter((i) => i.order_id === id) }
+    })
+  }
+
   private buildPayload(
     order: Order,
     items: OrderItem[],
     input: GhnShipmentInput,
     { isNew, province, district, ward }: ResolvedAddress,
+    bundle: BundleEntry[] = [],
   ): GhnOrderPayload {
     if (!items.length) throw new AppError(400, 'Đơn chưa có sản phẩm nào.')
+    const all = [{ order, items }, ...bundle]
+    // Gửi chung: nội dung hàng trên nhãn liệt kê từng đơn để lúc đóng gói không sót.
+    const content = bundle.length
+      ? `Gồm đơn ${all.map((b) => b.order.order_code).join(', ')}. ` + all.map((b) => `${b.order.order_code}: ${b.order.items_summary}`).join('; ')
+      : `${order.order_code}: ${order.items_summary}`
     return {
       ...this.senderFields(),
       to_name: input.to_name.trim(),
@@ -193,10 +269,10 @@ export class ShippingService {
       required_note: input.required_note,
       cod_amount: input.cod_amount,
       insurance_value: input.insurance_value,
-      order_value: order.total_amount,
+      order_value: all.reduce((sum, b) => sum + b.order.total_amount, 0),
       note: input.note.trim(),
-      content: `${order.order_code}: ${order.items_summary}`.slice(0, 2000),
-      items: items.map((it) => ({
+      content: content.slice(0, 2000),
+      items: all.flatMap((b) => b.items).map((it) => ({
         name: `${it.product_name} - size ${it.size}`.slice(0, 512),
         code: it.size,
         quantity: it.quantity,
@@ -209,7 +285,8 @@ export class ShippingService {
   async preview(orderId: string, input: GhnShipmentInput): Promise<GhnQuote> {
     const snap = await this.store.snapshot()
     const { order, items } = this.findOrder(snap, orderId)
-    return this.ghn.preview(this.buildPayload(order, items, input, await this.resolveAddress(input)))
+    const bundle = this.loadBundle(snap, order, input, false)
+    return this.ghn.preview(this.buildPayload(order, items, input, await this.resolveAddress(input), bundle))
   }
 
   createShipment(orderId: string, input: GhnShipmentInput): Promise<Order> {
@@ -221,12 +298,29 @@ export class ShippingService {
         throw new AppError(409, `Đơn đã có vận đơn GHN ${order.ghn_order_code}. Hủy vận đơn cũ trước khi tạo mới.`)
       }
       if (order.status === 'cancelled') throw new AppError(400, 'Đơn đã hủy, không thể gửi giao hàng.')
+      const bundle = this.loadBundle(snap, order, input, true)
+      // COD là tổng cả gói; mỗi đơn gửi kèm thu đúng phần còn phải thu của nó, phần còn lại thuộc đơn chính.
+      const bundleDue = bundle.reduce((sum, b) => sum + amountDue(b.order), 0)
+      if (input.cod_amount < bundleDue) {
+        throw new AppError(
+          400,
+          `Tiền thu hộ phải ít nhất ${bundleDue.toLocaleString('vi-VN')} ₫ (số còn phải thu của các đơn gửi kèm).`,
+        )
+      }
 
       const resolved = await this.resolveAddress(input)
       const { province, district, ward } = resolved
-      const payload = this.buildPayload(order, items, input, resolved)
+      const payload = this.buildPayload(order, items, input, resolved, bundle)
       // client_order_code giúp gửi lại an toàn: nếu lần trước GHN đã tạo mà app chưa kịp lưu, GHN trả lại đúng vận đơn đó.
       payload.client_order_code = nextClientCode(order)
+      if (bundle.length) {
+        // Ghi trước client code vào đơn gửi kèm: nếu GHN tạo xong mà app chưa kịp lưu, webhook vẫn nhận ra cả gói.
+        // Không đổi updated_at (chưa phải sửa đơn).
+        await this.store.updateMany(
+          'orders',
+          bundle.map(({ order: b }) => ({ ...b, ghn_client_code: payload.client_order_code ?? '' })),
+        )
+      }
       const created = await this.ghn.create(payload)
 
       const now = this.clock().toISOString()
@@ -238,14 +332,32 @@ export class ShippingService {
         // Để trống: mốc thời gian lấy theo đồng hồ GHN từ webhook/đồng bộ đầu tiên.
         ghn_status_at: '',
         ghn_fee: created.total_fee,
-        ghn_cod_amount: input.cod_amount,
+        ghn_cod_amount: input.cod_amount - bundleDue,
         ghn_expected_delivery: created.expected_delivery_time,
         ghn_to_address: payload.to_address,
         ghn_draft: '',
         status: ghnToOrderStatus('ready_to_pick') ?? order.status,
         updated_at: now,
       }
-      await this.store.update('orders', updated)
+      // Đơn gửi kèm: cùng mã vận đơn, phí ship chỉ ghi ở đơn chính.
+      const companions = bundle.map(
+        ({ order: b }): Order => ({
+          ...b,
+          ghn_order_code: updated.ghn_order_code,
+          ghn_client_code: updated.ghn_client_code,
+          ghn_status: updated.ghn_status,
+          ghn_status_at: '',
+          ghn_fee: 0,
+          ghn_cod_amount: amountDue(b),
+          ghn_expected_delivery: updated.ghn_expected_delivery,
+          ghn_to_address: updated.ghn_to_address,
+          ghn_draft: '',
+          status: ghnToOrderStatus('ready_to_pick') ?? b.status,
+          updated_at: now,
+        }),
+      )
+      if (companions.length) await this.store.updateMany('orders', [updated, ...companions])
+      else await this.store.update('orders', updated)
 
       if (input.save_address) {
         const customer = snap.customers.find((c) => c.id === order.customer_id)
@@ -300,49 +412,48 @@ export class ShippingService {
     if (!order.ghn_order_code) throw new AppError(400, 'Đơn chưa gửi GHN.')
     const detail = await this.ghn.detail(order.ghn_order_code)
     return this.writeLock.run(async () => {
-      const fresh = this.findOrder(await this.store.snapshot(true), orderId).order
+      const freshSnap = await this.store.snapshot(true)
+      const fresh = this.findOrder(freshSnap, orderId).order
       if (fresh.ghn_order_code !== order.ghn_order_code) return fresh
-      const next = applyGhnStatus(fresh, detail.status, detail.updated_date, this.clock().toISOString(), {
+      const changed = applyGhnStatusToShipment(this.shipmentMembers(freshSnap, fresh), detail.status, detail.updated_date, this.clock().toISOString(), {
         cod_amount: detail.cod_amount,
         expected_delivery: detail.leadtime,
       })
-      if (!next) return fresh
-      await this.store.update('orders', next)
-      return next
+      if (!changed.length) return fresh
+      await this.store.updateMany('orders', changed)
+      return changed.find((o) => o.id === orderId) ?? fresh
     })
   }
 
   /** Đồng bộ mọi vận đơn chưa kết thúc (dùng khi server không nhận được webhook, ví dụ chạy ở máy cá nhân). */
   async syncAll(): Promise<SyncAllResult> {
     const snap = await this.store.snapshot()
-    const active = snap.orders.filter((o) => o.ghn_order_code && !GHN_FINAL_STATUSES.includes(o.ghn_status))
+    // Đơn gửi chung một vận đơn chỉ hỏi GHN một lần.
+    const codes = [...new Set(snap.orders.filter((o) => o.ghn_order_code && !GHN_FINAL_STATUSES.includes(o.ghn_status)).map((o) => o.ghn_order_code))]
     const details = new Map<string, Awaited<ReturnType<GhnClient['detail']>>>()
     let failed = 0
     // Gọi GHN lần lượt, ngoài khóa ghi, để không chặn các thao tác khác trong lúc chờ mạng.
-    for (const o of active) {
+    for (const code of codes) {
       try {
-        details.set(o.ghn_order_code, await this.ghn.detail(o.ghn_order_code))
+        details.set(code, await this.ghn.detail(code))
       } catch {
         failed++
       }
     }
-    if (!details.size) return { checked: active.length, updated: 0, failed }
+    if (!details.size) return { checked: codes.length, updated: 0, failed }
 
     const updated = await this.writeLock.run(async () => {
       const fresh = await this.store.snapshot(true)
       const now = this.clock().toISOString()
-      let count = 0
-      for (const o of fresh.orders) {
-        const d = o.ghn_order_code ? details.get(o.ghn_order_code) : undefined
-        if (!d) continue
-        const next = applyGhnStatus(o, d.status, d.updated_date, now, { cod_amount: d.cod_amount, expected_delivery: d.leadtime })
-        if (!next) continue
-        await this.store.update('orders', next)
-        count++
+      const changed: Order[] = []
+      for (const [code, d] of details) {
+        const members = fresh.orders.filter((o) => o.ghn_order_code === code)
+        changed.push(...applyGhnStatusToShipment(members, d.status, d.updated_date, now, { cod_amount: d.cod_amount, expected_delivery: d.leadtime }))
       }
-      return count
+      if (changed.length) await this.store.updateMany('orders', changed)
+      return changed.length
     })
-    return { checked: active.length, updated, failed }
+    return { checked: codes.length, updated, failed }
   }
 
   /** Xử lý callback của GHN. Trả về false nếu không có đơn tương ứng (vẫn trả 200 để GHN không gửi lại). */
@@ -352,32 +463,40 @@ export class ShippingService {
       const clientCode = String(payload.ClientOrderCode ?? '').trim()
       if (!code) return false
       const snap = await this.store.snapshot(true)
-      let order = snap.orders.find((o) => o.ghn_order_code === code)
+      let members = snap.orders.filter((o) => o.ghn_order_code === code)
+      let order: Order | undefined = members[0]
       // Trường hợp GHN đã tạo vận đơn nhưng app chưa kịp lưu mã: nhận ra theo client_order_code.
       if (!order && clientCode) {
         const candidate = snap.orders.find((o) => o.order_code === clientCode.replace(/-R\d+$/, ''))
         // Chỉ nhận đúng mã mà lần tạo kế tiếp sẽ dùng, để callback của vận đơn cũ không gắn nhầm vào đơn.
         if (candidate && !isActiveShipment(candidate) && nextClientCode(candidate) === clientCode) {
-          order = { ...candidate, ghn_order_code: code, ghn_client_code: clientCode, ghn_status: '', ghn_status_at: '' }
+          const link = (o: Order): Order => ({ ...o, ghn_order_code: code, ghn_client_code: clientCode, ghn_status: '', ghn_status_at: '' })
+          order = link(candidate)
+          // Đơn gửi kèm đã được ghi sẵn client code trước khi gọi GHN.
+          const companions = snap.orders
+            .filter((o) => o.id !== candidate.id && o.ghn_client_code === clientCode && !isActiveShipment(o) && SHIPPABLE_STATUSES.includes(o.status))
+            .map((o): Order => ({ ...link(o), ghn_fee: 0, ghn_cod_amount: amountDue(o) }))
+          members = [order, ...companions]
         }
       }
       if (!order) return false
 
       const now = this.clock().toISOString()
       const at = String(payload.Time ?? '')
-      let next: Order | null = null
+      const cod = typeof payload.CODAmount === 'number' ? payload.CODAmount : undefined
+      const primary = primaryOf(members)
+      let changed: Order[] = []
       if ((payload.Type === 'switch_status' || payload.Type === 'create') && payload.Status) {
-        next = applyGhnStatus(order, String(payload.Status), at, now, {
-          cod_amount: typeof payload.CODAmount === 'number' ? payload.CODAmount : undefined,
-        })
-      } else if (payload.Type === 'update_cod' && typeof payload.CODAmount === 'number' && payload.CODAmount !== order.ghn_cod_amount) {
-        next = { ...order, ghn_cod_amount: payload.CODAmount, updated_at: now }
-      } else if (payload.Type === 'update_fee' && typeof payload.TotalFee === 'number' && payload.TotalFee > 0 && payload.TotalFee !== order.ghn_fee) {
-        next = { ...order, ghn_fee: payload.TotalFee, updated_at: now }
+        changed = applyGhnStatusToShipment(members, String(payload.Status), at, now, { cod_amount: cod })
+      } else if (payload.Type === 'update_cod' && cod !== undefined) {
+        const share = primaryCodShare(members, primary, cod)
+        if (share !== primary.ghn_cod_amount) changed = [{ ...primary, ghn_cod_amount: share, updated_at: now }]
+      } else if (payload.Type === 'update_fee' && typeof payload.TotalFee === 'number' && payload.TotalFee > 0 && payload.TotalFee !== primary.ghn_fee) {
+        changed = [{ ...primary, ghn_fee: payload.TotalFee, updated_at: now }]
       }
-      if (next) {
-        await this.store.update('orders', next)
-        console.log(`[ghn] webhook ${payload.Type} → ${ghnStatusLabel(next.ghn_status)}`)
+      if (changed.length) {
+        await this.store.updateMany('orders', changed)
+        console.log(`[ghn] webhook ${payload.Type} → ${ghnStatusLabel(changed[0].ghn_status)} (${changed.length} đơn)`)
       }
       return true
     })
@@ -397,9 +516,10 @@ export class ShippingService {
       }
       await this.ghn.cancel(order.ghn_order_code)
       const now = this.clock().toISOString()
-      const next = applyGhnStatus(order, 'cancel', '', now) ?? order
-      await this.store.update('orders', next)
-      return next
+      // Hủy vận đơn gửi chung thì mọi đơn trong gói đều về chưa gửi.
+      const changed = applyGhnStatusToShipment(this.shipmentMembers(snap, order), 'cancel', '', now)
+      if (changed.length) await this.store.updateMany('orders', changed)
+      return changed.find((o) => o.id === orderId) ?? order
     })
   }
 
@@ -417,8 +537,10 @@ export class ShippingService {
     const skipped: string[] = []
     for (const id of new Set(orderIds)) {
       const o = byId.get(id)
-      if (o && isActiveShipment(o)) codes.push(o.ghn_order_code)
-      else skipped.push(o?.order_code ?? id)
+      if (o && isActiveShipment(o)) {
+        // Đơn gửi chung một vận đơn chỉ in một nhãn.
+        if (!codes.includes(o.ghn_order_code)) codes.push(o.ghn_order_code)
+      } else skipped.push(o?.order_code ?? id)
     }
     if (!codes.length) throw new AppError(400, 'Các đơn đã chọn chưa có vận đơn GHN để in.')
     return { url: await this.ghn.printUrl(codes), count: codes.length, skipped }
