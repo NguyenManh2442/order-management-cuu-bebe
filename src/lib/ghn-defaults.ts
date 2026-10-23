@@ -48,6 +48,7 @@ export function bulkShipmentInput(
   ghn: GhnPublicConfig,
 ): { ok: true; input: GhnShipmentInput } | { ok: false; reason: string } {
   const draft = readDraft(order.ghn_draft)
+  if (draft?.values.bundle_ids?.length) return { ok: false, reason: 'Nháp gửi chung với đơn khác — mở đơn để gửi' }
   // Nháp lưu từ trước khi ghi tiền cọc / sửa sản phẩm có thể còn COD cũ — không tự gửi số đó.
   const due = amountDue(order)
   if (draft?.values.cod_amount !== undefined && draft.values.cod_amount !== due) {

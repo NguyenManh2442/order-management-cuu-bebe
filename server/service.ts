@@ -93,6 +93,7 @@ export class OrderService {
     const customers = new Map(snap.customers.map((c) => [c.id, c]))
     const groups = new Map(snap.groups.map((g) => [g.id, g]))
     const history = historyByCustomer(snap.orders)
+    const shipments = ordersByShipment(snap.orders)
     const items = new Map<string, OrderItem[]>()
     for (const it of snap.items) {
       const list = items.get(it.order_id)
@@ -106,6 +107,7 @@ export class OrderService {
         items: items.get(o.id) ?? [],
         group_name: groups.get(o.group_id)?.name ?? '(Nhóm đã bị xóa)',
         customer_history: historyExcluding(history.get(o.customer_id), o.status),
+        ghn_bundle: bundledWith(shipments, o),
       }))
       .sort(byNewest)
   }
@@ -198,21 +200,38 @@ export class OrderService {
     if (!order) throw notFound('đơn hàng')
     const customer = snap.customers.find((c) => c.id === order.customer_id)
     const shipped = isActiveShipment(order)
-    const amount_due = !OPEN_ORDER_STATUSES.includes(order.status) ? 0 : shipped ? order.ghn_cod_amount : amountDue(order)
+    const bundle = shipped ? (ordersByShipment(snap.orders).get(order.ghn_order_code) ?? [order]) : [order]
+    // Đơn cùng gói đã bị hủy trong app (mà vận đơn chưa hủy) thì không hiện, không tính tiền cho khách.
+    const companions = bundle.filter((o) => o.id !== order.id && o.status !== 'cancelled')
+    // Gửi chung: khách trả một lần cho cả gói = tổng phần thu hộ của các đơn trong gói còn đang mở.
+    const amount_due = !OPEN_ORDER_STATUSES.includes(order.status)
+      ? 0
+      : shipped
+        ? [order, ...companions].filter((o) => OPEN_ORDER_STATUSES.includes(o.status)).reduce((sum, o) => sum + o.ghn_cod_amount, 0)
+        : amountDue(order)
+    const publicItems = (orderId: string) =>
+      snap.items
+        .filter((i) => i.order_id === orderId)
+        .map(({ product_name, size, quantity, unit_price, line_total }) => ({ product_name, size, quantity, unit_price, line_total }))
+    const groupName = (groupId: string) => snap.groups.find((g) => g.id === groupId)?.name ?? ''
     return {
       order_code: order.order_code,
       created_at: order.created_at,
       status: order.status,
-      group_name: snap.groups.find((g) => g.id === order.group_id)?.name ?? '',
+      group_name: groupName(order.group_id),
       customer_name: customer?.name ?? '',
       customer_phone_masked: customer ? maskPhone(customer.phone) : '',
       delivery_address: (shipped && order.ghn_to_address) || customer?.address || '',
-      items: snap.items
-        .filter((i) => i.order_id === order.id)
-        .map(({ product_name, size, quantity, unit_price, line_total }) => ({ product_name, size, quantity, unit_price, line_total })),
+      items: publicItems(order.id),
       total_amount: order.total_amount,
       paid_amount: order.paid_amount,
       amount_due,
+      bundled_orders: companions.map((o) => ({
+        group_name: groupName(o.group_id),
+        items: publicItems(o.id),
+        total_amount: o.total_amount,
+        paid_amount: o.paid_amount,
+      })),
       shipment: shipped
         ? {
             code: order.ghn_order_code,
@@ -317,7 +336,7 @@ export class OrderService {
       await this.store.insert('items', items)
       await this.store.insert('orders', [order])
       const customer_history = historyByCustomer(snap.orders).get(customer.id) ?? emptyHistory()
-      return { ...order, customer, items, group_name: group.name, customer_history }
+      return { ...order, customer, items, group_name: group.name, customer_history, ghn_bundle: [] }
     })
   }
 
@@ -362,7 +381,8 @@ export class OrderService {
       await this.store.update('orders', order)
       const others = snap.orders.filter((o) => o.id !== id)
       const customer_history = historyByCustomer(others).get(customer.id) ?? emptyHistory()
-      return { ...order, customer, items, group_name: group.name, customer_history }
+      const ghn_bundle = bundledWith(ordersByShipment(snap.orders), order)
+      return { ...order, customer, items, group_name: group.name, customer_history, ghn_bundle }
     })
   }
 
@@ -427,6 +447,14 @@ export class OrderService {
       const current = snap.orders.find((o) => o.id === id)
       if (!current) throw notFound('đơn hàng')
       assertFresh(current.updated_at, expectedUpdatedAt, 'Đơn hàng')
+      // Xóa một đơn trong gói gửi chung làm lệch tiền thu hộ của các đơn còn lại.
+      const bundle = bundledWith(ordersByShipment(snap.orders), current)
+      if (bundle.length) {
+        throw new AppError(
+          400,
+          `Đơn đang gửi chung vận đơn ${current.ghn_order_code} với ${bundle.join(', ')}. Hủy vận đơn trước, hoặc dùng "Hủy đơn" thay vì xóa.`,
+        )
+      }
       await this.store.remove('orders', [id])
       await this.store.remove(
         'items',
@@ -539,4 +567,21 @@ function missingCustomer(id: string): Customer {
     created_at: '',
     updated_at: '',
   }
+}
+
+/** Đơn theo mã vận đơn GHN đang hiệu lực (nhiều đơn = gửi chung một gói). */
+function ordersByShipment(orders: Order[]): Map<string, Order[]> {
+  const map = new Map<string, Order[]>()
+  for (const o of orders) {
+    if (!isActiveShipment(o)) continue
+    const list = map.get(o.ghn_order_code)
+    if (list) list.push(o)
+    else map.set(o.ghn_order_code, [o])
+  }
+  return map
+}
+
+function bundledWith(shipments: Map<string, Order[]>, order: Order): string[] {
+  if (!isActiveShipment(order)) return []
+  return (shipments.get(order.ghn_order_code) ?? []).filter((o) => o.id !== order.id).map((o) => o.order_code)
 }

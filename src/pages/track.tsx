@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useParams } from 'react-router'
 import { ORDER_STATUS_LABELS, type OrderStatus } from '@shared/constants'
 import { ghnStatusLabel } from '@shared/ghn'
+import type { PublicOrderView } from '@shared/types'
 import { sizeTone } from '@/components/stats'
 import { STATUS_DOT, StatusBadge } from '@/components/status'
 import { ApiError, errorMessage } from '@/lib/api'
@@ -31,6 +32,16 @@ const STEP_TEXT: Partial<Record<OrderStatus, string>> = {
 export function TrackPage() {
   const token = useParams().token ?? ''
   const { data: o, isPending, error } = usePublicOrder(token)
+  // Gửi chung một gói: hiện sản phẩm của mọi đơn trong gói (gộp theo nhóm), tiền tính cho cả gói.
+  const bundled = !!o?.bundled_orders.length
+  const blocks: { group_name: string; items: PublicOrderView['items'] }[] = []
+  for (const b of o ? [o, ...o.bundled_orders] : []) {
+    const same = blocks.find((x) => x.group_name === b.group_name)
+    if (same) same.items = [...same.items, ...b.items]
+    else blocks.push({ group_name: b.group_name, items: b.items })
+  }
+  const totalAmount = o ? o.bundled_orders.reduce((s, b) => s + b.total_amount, o.total_amount) : 0
+  const paidAmount = o ? o.bundled_orders.reduce((s, b) => s + b.paid_amount, o.paid_amount) : 0
 
   useEffect(() => {
     document.title = o ? `Đơn ${o.order_code} — Nhà Cừu` : 'Tra cứu đơn hàng — Nhà Cừu'
@@ -164,30 +175,31 @@ export function TrackPage() {
           )}
 
           <section className="rounded-xl border bg-card p-4 shadow-xs">
-            <h2 className="font-semibold">{o.group_name || 'Sản phẩm'}</h2>
-            <ul className="mt-2 divide-y">
-              {o.items.map((it, i) => (
-                <li key={i} className="flex items-center justify-between gap-3 py-2 text-sm">
-                  <span className="min-w-0">
-                    <span className="block truncate">{it.product_name}</span>
-                    <span className="text-muted-foreground">
-                      <span className={cn('mr-1.5 inline-flex rounded-md border px-1.5 text-xs font-bold', sizeTone(it.size))}>{it.size}</span>
-                      {formatNumber(it.quantity)} × {formatVND(it.unit_price)}
-                    </span>
-                  </span>
-                  <span className="shrink-0 font-medium tabular-nums">{formatVND(it.line_total)}</span>
-                </li>
-              ))}
-            </ul>
+            {bundled ? (
+              <>
+                <h2 className="font-semibold">Sản phẩm trong gói hàng</h2>
+                {blocks.map((b, i) => (
+                  <div key={i} className="mt-3">
+                    <h3 className="text-sm font-medium text-muted-foreground">{b.group_name || 'Sản phẩm'}</h3>
+                    <ItemList items={b.items} />
+                  </div>
+                ))}
+              </>
+            ) : (
+              <>
+                <h2 className="font-semibold">{o.group_name || 'Sản phẩm'}</h2>
+                <ItemList items={o.items} className="mt-2" />
+              </>
+            )}
             <dl className="mt-2 grid gap-1 border-t pt-3 text-sm">
               <div className="flex justify-between">
                 <dt>Tổng tiền hàng</dt>
-                <dd className="font-medium tabular-nums">{formatVND(o.total_amount)}</dd>
+                <dd className="font-medium tabular-nums">{formatVND(totalAmount)}</dd>
               </div>
-              {o.paid_amount > 0 && (
+              {paidAmount > 0 && (
                 <div className="flex justify-between text-emerald-700">
                   <dt>Đã thanh toán</dt>
-                  <dd className="tabular-nums">− {formatVND(o.paid_amount)}</dd>
+                  <dd className="tabular-nums">− {formatVND(paidAmount)}</dd>
                 </div>
               )}
             </dl>
@@ -206,5 +218,24 @@ export function TrackPage() {
         </div>
       )}
     </div>
+  )
+}
+
+function ItemList({ items, className }: { items: PublicOrderView['items']; className?: string }) {
+  return (
+    <ul className={cn('divide-y', className)}>
+      {items.map((it, i) => (
+        <li key={i} className="flex items-center justify-between gap-3 py-2 text-sm">
+          <span className="min-w-0">
+            <span className="block truncate">{it.product_name}</span>
+            <span className="text-muted-foreground">
+              <span className={cn('mr-1.5 inline-flex rounded-md border px-1.5 text-xs font-bold', sizeTone(it.size))}>{it.size}</span>
+              {formatNumber(it.quantity)} × {formatVND(it.unit_price)}
+            </span>
+          </span>
+          <span className="shrink-0 font-medium tabular-nums">{formatVND(it.line_total)}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

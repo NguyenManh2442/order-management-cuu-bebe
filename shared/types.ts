@@ -86,6 +86,8 @@ export interface OrderView extends Order {
   group_name: string
   /** Các đơn KHÁC của cùng khách (không tính đơn này). */
   customer_history: CustomerHistory
+  /** Mã các đơn khác gửi chung vận đơn GHN đang hiệu lực với đơn này ([] = gửi riêng). */
+  ghn_bundle: string[]
 }
 
 /** Khách tìm theo SĐT, kèm lịch sử để cảnh báo ngay trên form tạo đơn. */
@@ -107,8 +109,15 @@ export interface PublicOrderView {
   items: Pick<OrderItem, 'product_name' | 'size' | 'quantity' | 'unit_price' | 'line_total'>[]
   total_amount: number
   paid_amount: number
-  /** Số tiền khách còn phải trả (COD trên GHN nếu đã gửi hàng). */
+  /** Số tiền khách còn phải trả (COD trên GHN nếu đã gửi hàng; gửi chung thì là tổng cả gói). */
   amount_due: number
+  /** Đơn khác giao chung một gói với đơn này — hiện sản phẩm để khách thấy đủ hàng trong gói. */
+  bundled_orders: {
+    group_name: string
+    items: Pick<OrderItem, 'product_name' | 'size' | 'quantity' | 'unit_price' | 'line_total'>[]
+    total_amount: number
+    paid_amount: number
+  }[]
   shipment: {
     code: string
     status: string

@@ -45,6 +45,25 @@ export const GHN_CANCELLABLE_STATUSES = ['ready_to_pick', 'picking', 'money_coll
 export const isActiveShipment = (o: { ghn_order_code: string; ghn_status: string }) =>
   !!o.ghn_order_code && o.ghn_status !== 'cancel'
 
+/** Đơn còn ở giai đoạn chuẩn bị hàng — gửi GHN được. */
+export const SHIPPABLE_STATUSES: OrderStatus[] = ['pending', 'confirmed', 'packing']
+
+/** Số đơn tối đa gửi kèm trong một vận đơn (không tính đơn chính). */
+export const MAX_BUNDLE_ORDERS = 10
+
+/**
+ * Đơn khác của cùng khách có thể gửi chung một vận đơn với đơn này:
+ * còn ở giai đoạn chuẩn bị hàng và chưa có vận đơn đang hiệu lực.
+ */
+export function bundleCandidates<T extends Pick<Order, 'id' | 'customer_id' | 'status' | 'ghn_order_code' | 'ghn_status'>>(
+  order: Pick<Order, 'id' | 'customer_id'>,
+  orders: T[],
+): T[] {
+  return orders.filter(
+    (o) => o.id !== order.id && o.customer_id === order.customer_id && SHIPPABLE_STATUSES.includes(o.status) && !isActiveShipment(o),
+  )
+}
+
 /**
  * Trạng thái GHN → trạng thái đơn trong app. null = giữ nguyên trạng thái đơn
  * (ví dụ vận đơn bị hủy hay gặp sự cố: shop tự quyết định tạo lại hay hủy đơn).
