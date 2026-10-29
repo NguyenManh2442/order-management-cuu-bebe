@@ -15,7 +15,7 @@ import { dateKey } from '@/lib/utils'
 export function OrdersPage() {
   const { data: orders, isPending, error, refetch } = useOrders()
   const { data: groups } = useGroups()
-  const { filters, setFilter, clear, filtered, sizeOptions } = useOrderFilters(orders)
+  const { filters, setFilter, clear, filtered, sizeOptions, dupCustomerCount } = useOrderFilters(orders)
   const { data: config } = useConfig()
   const syncGhn = useSyncAllGhn()
   const selection = useOrderSelection(filtered)
@@ -62,7 +62,14 @@ export function OrdersPage() {
         }
       />
       <DeliveryFailedCard orders={deliveryFailed(orders)} className="mb-4" />
-      <OrderFilters filters={filters} setFilter={setFilter} clear={clear} groups={groups} sizeOptions={sizeOptions} />
+      <OrderFilters
+        filters={filters}
+        setFilter={setFilter}
+        clear={clear}
+        groups={groups}
+        sizeOptions={sizeOptions}
+        dupCustomerCount={dupCustomerCount}
+      />
       <div className="mt-4">
         {isPending ? (
           <ListSkeleton />

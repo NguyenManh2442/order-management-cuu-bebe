@@ -1,4 +1,4 @@
-import { Download, Filter, Search, X } from 'lucide-react'
+import { Download, Filter, Search, Users, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { ORDER_STATUSES, type OrderStatus } from '@shared/constants'
@@ -22,6 +22,8 @@ export interface OrderFilterState {
   group: string
   /** Đơn có ít nhất một dòng sản phẩm đúng size này. */
   size: string
+  /** '1' = chỉ đơn của khách có từ 2 đơn trở lên (trong phạm vi đang xem), xếp liền nhau theo khách. */
+  dup: string
 }
 
 export interface SizeOption {
@@ -42,6 +44,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     to: params.get('to') ?? '',
     group: params.get('group') ?? '',
     size: normalizeSize(params.get('size') ?? ''),
+    dup: params.get('dup') === '1' ? '1' : '',
   }
   const { data: config } = useConfig()
 
@@ -62,21 +65,36 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        for (const k of ['q', 'status', 'from', 'to', 'group', 'size', 'page']) next.delete(k)
+        for (const k of ['q', 'status', 'from', 'to', 'group', 'size', 'dup', 'page']) next.delete(k)
         return next
       },
       { replace: true },
     )
 
-  const { q, status, from, to, group, size } = filters
+  const { q, status, from, to, group, size, dup } = filters
+  /**
+   * Số đơn của từng khách trong phạm vi đang xem (theo nhóm đang lọc), không tính đơn đã hủy —
+   * khách đặt trùng là khách có từ 2 đơn trở lên.
+   */
+  const customerCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const o of orders ?? []) {
+      if (o.status === 'cancelled' || (group && o.group_id !== group)) continue
+      counts.set(o.customer_id, (counts.get(o.customer_id) ?? 0) + 1)
+    }
+    return counts
+  }, [orders, group])
+  const dupCustomerCount = useMemo(() => [...customerCounts.values()].filter((n) => n > 1).length, [customerCounts])
+
   const filtered = useMemo(() => {
     if (!orders) return []
     const text = searchKey(q)
     const digits = q.replace(/\D/g, '')
-    return orders.filter((o) => {
+    const list = orders.filter((o) => {
       if (status && o.status !== status) return false
       if (group && o.group_id !== group) return false
       if (size && !o.items.some((i) => normalizeSize(i.size) === size)) return false
+      if (dup && (o.status === 'cancelled' || (customerCounts.get(o.customer_id) ?? 0) < 2)) return false
       if (from || to) {
         const d = dateKey(o.created_at)
         if (from && d < from) return false
@@ -91,7 +109,14 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
       }
       return true
     })
-  }, [orders, q, status, from, to, group, size])
+    if (!dup) return list
+    // Xếp các đơn của cùng khách liền nhau (khách có đơn mới nhất lên trước) để dễ so sánh.
+    const rank = new Map<string, number>()
+    list.forEach((o, i) => {
+      if (!rank.has(o.customer_id)) rank.set(o.customer_id, i)
+    })
+    return [...list].sort((a, b) => rank.get(a.customer_id)! - rank.get(b.customer_id)!)
+  }, [orders, q, status, from, to, group, size, dup, customerCounts])
 
   /** Size để chọn: size cấu hình + size lạ đã có trong đơn, kèm số đơn mỗi size. */
   const sizeOptions = useMemo<SizeOption[]>(() => {
@@ -103,7 +128,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     return sortSizes([...preferred.map(normalizeSize), ...counts.keys()], preferred).map((s) => ({ size: s, count: counts.get(s) ?? 0 }))
   }, [orders, config])
 
-  return { filters, setFilter, clear, filtered, sizeOptions }
+  return { filters, setFilter, clear, filtered, sizeOptions, dupCustomerCount }
 }
 
 export function OrderFilters({
@@ -112,6 +137,7 @@ export function OrderFilters({
   clear,
   groups,
   sizeOptions,
+  dupCustomerCount,
   searchPlaceholder = 'Tìm mã đơn, tên khách, SĐT…',
 }: {
   filters: OrderFilterState
@@ -119,9 +145,11 @@ export function OrderFilters({
   clear: () => void
   groups?: { id: string; name: string }[]
   sizeOptions?: SizeOption[]
+  /** Có = hiện nút lọc "Trùng khách" kèm số khách đặt từ 2 đơn trở lên. */
+  dupCustomerCount?: number
   searchPlaceholder?: string
 }) {
-  const advancedCount = [filters.status, filters.from, filters.to, filters.group, filters.size].filter(Boolean).length
+  const advancedCount = [filters.status, filters.from, filters.to, filters.group, filters.size, filters.dup].filter(Boolean).length
   const [open, setOpen] = useState(advancedCount > 0)
 
   return (
@@ -191,6 +219,21 @@ export function OrderFilters({
           <Label className="text-xs text-muted-foreground">Đến ngày</Label>
           <Input type="date" value={filters.to} min={filters.from || undefined} onChange={(e) => setFilter('to', e.target.value)} />
         </div>
+        {dupCustomerCount !== undefined && (
+          <div className="col-span-2 grid gap-1 md:col-span-1">
+            <Label className="text-xs text-muted-foreground">Khách đặt nhiều đơn</Label>
+            <Button
+              type="button"
+              variant={filters.dup ? 'default' : 'outline'}
+              className="h-10 justify-start"
+              aria-pressed={!!filters.dup}
+              title="Chỉ hiện đơn của khách có từ 2 đơn trở lên (không tính đơn đã hủy), xếp liền nhau theo khách"
+              onClick={() => setFilter('dup', filters.dup ? '' : '1')}
+            >
+              <Users /> Trùng khách ({dupCustomerCount})
+            </Button>
+          </div>
+        )}
         {(advancedCount > 0 || filters.q) && (
           <Button variant="ghost" className="col-span-2 justify-self-start md:col-span-1 md:self-end" onClick={clear}>
             <X /> Xóa bộ lọc
