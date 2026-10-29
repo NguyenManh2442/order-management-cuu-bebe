@@ -23,7 +23,7 @@ export function GroupDetailPage() {
   const id = useParams().id!
   const { data, isPending, error, refetch } = useGroup(id)
   const { data: config } = useConfig()
-  const { filters, setFilter, clear, filtered, sizeOptions } = useOrderFilters(data?.orders)
+  const { filters, setFilter, clear, filtered, sizeOptions, dupCustomerCount } = useOrderFilters(data?.orders)
   const selection = useOrderSelection(filtered)
   const [includeCancelled, setIncludeCancelled] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(false)
@@ -161,6 +161,7 @@ export function GroupDetailPage() {
           setFilter={setFilter}
           clear={clear}
           sizeOptions={sizeOptions}
+          dupCustomerCount={dupCustomerCount}
           searchPlaceholder="Tìm khách, SĐT, mã đơn…"
         />
         {isOpen && (

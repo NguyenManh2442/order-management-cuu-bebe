@@ -265,3 +265,190 @@ export function Dropdown<T extends string | number>({
     />
   )
 }
+
+/**
+ * Ô chọn nhiều: menu giữ mở để tích liên tục, có ô tìm khi danh sách dài.
+ * Không chọn gì = hiện placeholder (thường hiểu là "tất cả").
+ */
+export function MultiDropdown<T extends string | number>({
+  values,
+  options,
+  onChange,
+  placeholder = 'Chọn…',
+  /** Nhãn khi chọn nhiều, ví dụ (n) => `${n} nhóm`. */
+  summary = (n) => `Đã chọn ${n}`,
+  className,
+  'aria-label': ariaLabel,
+}: {
+  values: T[]
+  options: DropdownOption<T>[]
+  onChange: (values: T[]) => void
+  placeholder?: string
+  summary?: (count: number) => string
+  className?: string
+  'aria-label'?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
+  const [query, setQuery] = useState('')
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const menuRef = useRef<HTMLDivElement | null>(null)
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const listId = useId()
+  const style = useFloatingMenu(open, triggerRef, 240)
+  const searchable = options.length > 6
+  const text = query.trim().toLowerCase()
+  const shown = text ? options.filter((o) => String(typeof o.label === 'string' ? o.label : o.value).toLowerCase().includes(text)) : options
+
+  const close = (focusTrigger = true) => {
+    setOpen(false)
+    setQuery('')
+    if (focusTrigger) triggerRef.current?.focus()
+  }
+  const toggle = (v: T) => onChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v])
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node
+      if (!triggerRef.current?.contains(t) && !menuRef.current?.contains(t)) close(false)
+    }
+    document.addEventListener('pointerdown', onDown)
+    return () => document.removeEventListener('pointerdown', onDown)
+  }, [open])
+
+  useEffect(() => {
+    const list = listRef.current
+    const item = list?.querySelector<HTMLElement>(`[data-index="${active}"]`)
+    if (!open || !list || !item) return
+    if (item.offsetTop < list.scrollTop) list.scrollTop = item.offsetTop
+    else if (item.offsetTop + item.offsetHeight > list.scrollTop + list.clientHeight) {
+      list.scrollTop = item.offsetTop + item.offsetHeight - list.clientHeight
+    }
+  }, [open, active])
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!open) {
+      if (['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) {
+        e.preventDefault()
+        setActive(0)
+        setOpen(true)
+      }
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      setActive((i) => Math.min(shown.length - 1, i + 1))
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      setActive((i) => Math.max(0, i - 1))
+    } else if (e.key === 'Enter' || (e.key === ' ' && !(e.target instanceof HTMLInputElement))) {
+      e.preventDefault()
+      const opt = shown[active]
+      if (opt) toggle(opt.value)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      close()
+    } else if (e.key === 'Tab') {
+      close(false)
+    }
+  }
+
+  const chosen = options.filter((o) => values.includes(o.value))
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listId : undefined}
+        onClick={() => (open ? close() : (setActive(0), setOpen(true)))}
+        onKeyDown={onKeyDown}
+        className={cn(
+          fieldClass,
+          'relative flex h-11 cursor-pointer items-center gap-2 pr-9 text-left md:h-10',
+          open && 'border-ring ring-2 ring-ring/30',
+          className,
+        )}
+      >
+        <span className={cn('min-w-0 flex-1 truncate', !chosen.length && 'text-muted-foreground')}>
+          {!chosen.length ? placeholder : chosen.length === 1 ? chosen[0].label : summary(chosen.length)}
+        </span>
+        <ChevronDown
+          className={cn(
+            'pointer-events-none absolute top-1/2 right-3 size-4 -translate-y-1/2 text-muted-foreground transition-transform',
+            open && 'rotate-180',
+          )}
+        />
+      </button>
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            style={style}
+            className="z-50 flex flex-col overflow-hidden rounded-lg border bg-card shadow-lg"
+            onKeyDown={onKeyDown}
+          >
+            {searchable && (
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value)
+                  setActive(0)
+                }}
+                placeholder="Tìm…"
+                aria-label="Tìm trong danh sách"
+                className="border-b bg-transparent px-3 py-2.5 text-base outline-none md:py-2 md:text-sm"
+              />
+            )}
+            <ul ref={listRef} id={listId} role="listbox" aria-multiselectable className="min-h-0 flex-1 overflow-auto py-1">
+              {shown.map((o, i) => {
+                const on = values.includes(o.value)
+                return (
+                  <li
+                    key={String(o.value)}
+                    role="option"
+                    data-index={i}
+                    aria-selected={on}
+                    onPointerEnter={() => setActive(i)}
+                    onClick={() => toggle(o.value)}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2.5 px-3 py-2.5 text-base md:py-2 md:text-sm',
+                      i === active && 'bg-secondary',
+                    )}
+                  >
+                    <span
+                      className={cn(
+                        'flex size-4 shrink-0 items-center justify-center rounded border',
+                        on ? 'border-primary bg-primary text-primary-foreground' : 'border-input bg-card',
+                      )}
+                    >
+                      {on && <Check className="size-3" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate">{o.label}</span>
+                      {o.description && <span className="block text-xs text-muted-foreground">{o.description}</span>}
+                    </span>
+                  </li>
+                )
+              })}
+              {!shown.length && <li className="px-3 py-2 text-sm text-muted-foreground">Không có kết quả</li>}
+            </ul>
+            {values.length > 0 && (
+              <button
+                type="button"
+                className="border-t px-3 py-2.5 text-left text-sm text-muted-foreground hover:bg-secondary md:py-2"
+                onClick={() => onChange([])}
+              >
+                Bỏ chọn tất cả
+              </button>
+            )}
+          </div>,
+          document.body,
+        )}
+    </>
+  )
+}
