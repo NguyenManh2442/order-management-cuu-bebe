@@ -16,8 +16,9 @@ const PAGE = 20
 
 function ItemsText({ order }: { order: OrderView }) {
   if (!order.items.length) return <span className="text-muted-foreground">—</span>
+  const total = order.items.reduce((sum, it) => sum + it.quantity, 0)
   return (
-    <span className="inline-flex flex-wrap gap-1">
+    <span className="inline-flex flex-wrap items-center gap-1">
       {order.items.map((it) => (
         <span
           key={it.id}
@@ -28,6 +29,9 @@ function ItemsText({ order }: { order: OrderView }) {
           <b className="font-bold">{formatNumber(it.quantity)}</b>
         </span>
       ))}
+      <span className="text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+        Tổng SL: <b className="text-foreground">{formatNumber(total)}</b>
+      </span>
     </span>
   )
 }

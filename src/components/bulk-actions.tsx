@@ -4,6 +4,8 @@ import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import { ORDER_STATUS_LABELS, type OrderStatus } from '@shared/constants'
 import { isActiveShipment, SHIPPABLE_STATUSES } from '@shared/ghn'
+import { normalizeSize } from '@shared/phone'
+import { sortSizes } from '@shared/stats'
 import type { Order, OrderView } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
@@ -12,6 +14,7 @@ import { api, errorMessage } from '@/lib/api'
 import { bulkShipmentInput } from '@/lib/ghn-defaults'
 import { keys, useBulkOrderStatus, useBulkPrintGhn, useConfig } from '@/lib/queries'
 import { cn, formatVND } from '@/lib/utils'
+import { sizeTone } from './stats'
 import { ORDER_STATUS_OPTIONS } from './status'
 
 export interface OrderSelection {
@@ -89,6 +92,18 @@ export function BulkActionBar({ selection }: { selection: OrderSelection }) {
   const [ghnOrders, setGhnOrders] = useState<OrderView[] | null>(null)
   const { selected } = selection
   const printable = selected.filter(isActiveShipment)
+  /** Tổng số lượng từng size của các đơn đang chọn (để soạn / đặt hàng theo lô). */
+  const sizeTotals = useMemo(() => {
+    const totals = new Map<string, number>()
+    for (const o of selected) {
+      for (const it of o.items) {
+        const size = normalizeSize(it.size)
+        totals.set(size, (totals.get(size) ?? 0) + it.quantity)
+      }
+    }
+    const sizes = sortSizes(totals.keys(), config?.sizes ?? [])
+    return { sizes: sizes.map((size) => ({ size, quantity: totals.get(size)! })), total: [...totals.values()].reduce((a, b) => a + b, 0) }
+  }, [selected, config])
 
   const runStatus = ({ status, orders }: { status: OrderStatus; orders: OrderView[] }) =>
     bulkStatus.mutate(
@@ -163,6 +178,23 @@ export function BulkActionBar({ selection }: { selection: OrderSelection }) {
             <Button variant="ghost" size="sm" className="ml-auto" onClick={selection.clear} aria-label="Bỏ chọn">
               <X /> <span className="hidden sm:inline">Bỏ chọn</span>
             </Button>
+            {sizeTotals.total > 0 && (
+              <div className="flex w-full flex-wrap items-center gap-1 border-t px-2 pt-2" aria-label="Số lượng theo size của các đơn đã chọn">
+                {sizeTotals.sizes.map(({ size, quantity }) => (
+                  <span
+                    key={size}
+                    className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs whitespace-nowrap tabular-nums', sizeTone(size))}
+                  >
+                    <b className="font-bold">{size}</b>
+                    <span className="opacity-70">×</span>
+                    <b className="font-bold">{quantity.toLocaleString('vi-VN')}</b>
+                  </span>
+                ))}
+                <span className="ml-1 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
+                  Tổng SL: <b className="text-foreground">{sizeTotals.total.toLocaleString('vi-VN')}</b>
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -96,7 +96,12 @@ export function OrderDetailPage() {
                 ))}
               </ul>
               <div className="mt-3 flex justify-between border-t pt-3 font-semibold">
-                <span>Tổng cộng</span>
+                <span>
+                  Tổng cộng{' '}
+                  <span className="font-normal text-muted-foreground">
+                    ({formatNumber(order.items.reduce((sum, it) => sum + it.quantity, 0))} sản phẩm)
+                  </span>
+                </span>
                 <span className="tabular-nums">{formatVND(order.total_amount)}</span>
               </div>
               {order.paid_amount > 0 && (
