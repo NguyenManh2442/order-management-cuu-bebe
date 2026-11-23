@@ -1,12 +1,17 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import type { OrderStatus } from '../shared/constants'
 import { emptyHistory, historyByCustomer, historyExcluding } from '../shared/customer-history'
+import { withDeliveredAt } from '../shared/finance'
 import { ghnTrackingUrl, isActiveShipment } from '../shared/ghn'
 import { normalizePhone, normalizeSize, normalizeUrl } from '../shared/phone'
 import { COST_CATEGORIES } from '../shared/constants'
 import type {
   BulkOrderStatusInput,
   CustomerInput,
+  BatchCreateInput,
+  BatchOrdersInput,
+  BatchUpdateInput,
+  ExpenseInput,
   GroupCostInput,
   GroupInput,
   OrderInput,
@@ -19,6 +24,10 @@ import type {
   CustomerDetail,
   CustomerLookup,
   CustomerSummary,
+  Batch,
+  BatchDetail,
+  BatchSummary,
+  Expense,
   GroupCost,
   GroupDetail,
   GroupWithStats,
@@ -36,6 +45,11 @@ const byNewest = (a: { created_at: string }, b: { created_at: string }) => b.cre
 
 /** Mã đơn dạng DH251221-001: ngày tạo theo giờ Việt Nam + số thứ tự trong ngày. */
 export function nextOrderCode(existing: Iterable<string>, now: Date): string {
+  return nextDailyCode('DH', 3, existing, now)
+}
+
+/** Mã theo ngày (giờ Việt Nam): DH261123-001, LX261123-01… */
+function nextDailyCode(letters: string, pad: number, existing: Iterable<string>, now: Date): string {
   const ymd = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Ho_Chi_Minh',
     year: '2-digit',
@@ -44,7 +58,7 @@ export function nextOrderCode(existing: Iterable<string>, now: Date): string {
   })
     .format(now)
     .replaceAll('-', '')
-  const prefix = `DH${ymd}-`
+  const prefix = `${letters}${ymd}-`
   const codes = new Set(existing)
   let max = 0
   for (const code of codes) {
@@ -53,8 +67,8 @@ export function nextOrderCode(existing: Iterable<string>, now: Date): string {
     if (Number.isInteger(n) && n > max) max = n
   }
   let seq = max + 1
-  while (codes.has(prefix + String(seq).padStart(3, '0'))) seq++
-  return prefix + String(seq).padStart(3, '0')
+  while (codes.has(prefix + String(seq).padStart(pad, '0'))) seq++
+  return prefix + String(seq).padStart(pad, '0')
 }
 
 /** Giá trị trống cho các cột GHN của đơn chưa gửi giao hàng. */
@@ -68,6 +82,7 @@ export const EMPTY_GHN_FIELDS = {
   ghn_expected_delivery: '',
   ghn_to_address: '',
   ghn_draft: '',
+  printed_at: '',
 } satisfies Partial<Order>
 
 /** Mã link tra cứu: 128 bit ngẫu nhiên, base64url 22 ký tự — không đoán được. */
@@ -94,6 +109,7 @@ export class OrderService {
     const groups = new Map(snap.groups.map((g) => [g.id, g]))
     const history = historyByCustomer(snap.orders)
     const shipments = ordersByShipment(snap.orders)
+    const batchCodes = new Map(snap.batches.map((b) => [b.id, b.code]))
     const items = new Map<string, OrderItem[]>()
     for (const it of snap.items) {
       const list = items.get(it.order_id)
@@ -108,6 +124,7 @@ export class OrderService {
         group_name: groups.get(o.group_id)?.name ?? '(Nhóm đã bị xóa)',
         customer_history: historyExcluding(history.get(o.customer_id), o.status),
         ghn_bundle: bundledWith(shipments, o),
+        batch_code: batchCodes.get(o.batch_id) ?? '',
       }))
       .sort(byNewest)
   }
@@ -266,6 +283,162 @@ export class OrderService {
     })
   }
 
+  // ---------- Lô xuất ----------
+
+  /** Lô đang xuất trước, mới nhất trước; kèm tiến độ (đã có vận đơn / đã in). */
+  async listBatches(): Promise<BatchSummary[]> {
+    const snap = await this.store.snapshot()
+    const counts = new Map<string, Omit<BatchSummary, keyof Batch>>()
+    const itemCount = new Map<string, number>()
+    for (const it of snap.items) itemCount.set(it.order_id, (itemCount.get(it.order_id) ?? 0) + it.quantity)
+    for (const o of snap.orders) {
+      if (!o.batch_id) continue
+      const c = counts.get(o.batch_id) ?? { order_count: 0, shipped_count: 0, printed_count: 0, item_count: 0 }
+      c.order_count++
+      if (isActiveShipment(o)) {
+        c.shipped_count++
+        if (o.printed_at) c.printed_count++
+      }
+      if (o.status !== 'cancelled') c.item_count += itemCount.get(o.id) ?? 0
+      counts.set(o.batch_id, c)
+    }
+    return snap.batches
+      .map((b) => ({ ...b, ...(counts.get(b.id) ?? { order_count: 0, shipped_count: 0, printed_count: 0, item_count: 0 }) }))
+      .sort((a, b) => (a.status === b.status ? b.created_at.localeCompare(a.created_at) : a.status === 'open' ? -1 : 1))
+  }
+
+  async getBatch(id: string): Promise<BatchDetail> {
+    const snap = await this.store.snapshot()
+    const batch = snap.batches.find((b) => b.id === id)
+    if (!batch) throw notFound('lô xuất')
+    return { batch, orders: this.buildViews(snap, snap.orders.filter((o) => o.batch_id === id)) }
+  }
+
+  createBatch(input: BatchCreateInput): Promise<Batch> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const nowDate = this.clock()
+      const now = nowDate.toISOString()
+      const batch: Batch = {
+        id: randomUUID(),
+        code: nextDailyCode('LX', 2, snap.batches.map((b) => b.code), nowDate),
+        note: input.note.trim(),
+        status: 'open',
+        created_at: now,
+        updated_at: now,
+      }
+      await this.store.insert('batches', [batch])
+      await this.assignBatch(snap, input.order_ids, batch.id)
+      return batch
+    })
+  }
+
+  updateBatch(id: string, input: BatchUpdateInput): Promise<Batch> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const current = snap.batches.find((b) => b.id === id)
+      if (!current) throw notFound('lô xuất')
+      assertFresh(current.updated_at, input.expected_updated_at, 'Lô xuất')
+      const batch: Batch = { ...current, note: input.note.trim(), status: input.status, updated_at: this.clock().toISOString() }
+      await this.store.update('batches', batch)
+      return batch
+    })
+  }
+
+  /** Xóa lô: đơn trong lô chỉ được gỡ ra (về "chưa vào lô"), không bị xóa. */
+  deleteBatch(id: string): Promise<void> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      if (!snap.batches.some((b) => b.id === id)) throw notFound('lô xuất')
+      await this.assignBatch(
+        snap,
+        snap.orders.filter((o) => o.batch_id === id).map((o) => o.id),
+        '',
+      )
+      await this.store.remove('batches', [id])
+    })
+  }
+
+  /** Thêm đơn vào lô (đơn đang ở lô khác được chuyển sang) hoặc bỏ đơn khỏi lô. */
+  setBatchOrders(id: string, input: BatchOrdersInput): Promise<{ changed: number; moved: number }> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      if (!snap.batches.some((b) => b.id === id)) throw notFound('lô xuất')
+      const ids = new Set(input.order_ids)
+      const targets = snap.orders.filter((o) => ids.has(o.id) && (input.action === 'add' ? o.batch_id !== id : o.batch_id === id))
+      const moved = input.action === 'add' ? targets.filter((o) => o.batch_id).length : 0
+      await this.assignBatch(
+        snap,
+        targets.map((o) => o.id),
+        input.action === 'add' ? id : '',
+      )
+      return { changed: targets.length, moved }
+    })
+  }
+
+  /** Đánh dấu / bỏ đánh dấu đã in nhãn (in hỏng cần in lại, hoặc đơn in trước khi có tính năng này). */
+  setPrinted(orderIds: string[], printed: boolean): Promise<{ changed: number }> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const ids = new Set(orderIds)
+      const now = this.clock().toISOString()
+      const changed = snap.orders
+        .filter((o) => ids.has(o.id) && !!o.printed_at !== printed)
+        .map((o) => ({ ...o, printed_at: printed ? now : '' }))
+      if (changed.length) await this.store.updateMany('orders', changed)
+      return { changed: changed.length }
+    })
+  }
+
+  /**
+   * Gán lô cho đơn. Không đổi updated_at: xếp lô không phải sửa đơn, người khác đang mở form sửa đơn
+   * không bị báo xung đột.
+   */
+  private async assignBatch(snap: Snapshot, orderIds: string[], batchId: string) {
+    const ids = new Set(orderIds)
+    const changed = snap.orders.filter((o) => ids.has(o.id) && o.batch_id !== batchId).map((o) => ({ ...o, batch_id: batchId }))
+    if (changed.length) await this.store.updateMany('orders', changed)
+  }
+
+  // ---------- Chi phí ngoài (chi phí chung của shop) ----------
+
+  /** Mới nhất trước (theo ngày chi, cùng ngày thì khoản nhập sau lên trước). */
+  async listExpenses(): Promise<Expense[]> {
+    const snap = await this.store.snapshot()
+    return [...snap.expenses].sort((a, b) => b.date.localeCompare(a.date) || b.created_at.localeCompare(a.created_at))
+  }
+
+  createExpense(input: ExpenseInput): Promise<Expense> {
+    return this.writeLock.run(async () => {
+      const now = this.clock().toISOString()
+      const expense: Expense = { id: randomUUID(), ...expenseFields(input), created_at: now, updated_at: now }
+      await this.store.insert('expenses', [expense])
+      return expense
+    })
+  }
+
+  updateExpense(id: string, input: ExpenseInput): Promise<Expense> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const current = snap.expenses.find((e) => e.id === id)
+      if (!current) throw notFound('khoản chi')
+      assertFresh(current.updated_at, input.expected_updated_at, 'Khoản chi')
+      const expense: Expense = { ...current, ...expenseFields(input), updated_at: this.clock().toISOString() }
+      await this.store.update('expenses', expense)
+      return expense
+    })
+  }
+
+  deleteExpense(id: string, expectedUpdatedAt?: string): Promise<void> {
+    return this.writeLock.run(async () => {
+      const snap = await this.store.snapshot(true)
+      const current = snap.expenses.find((e) => e.id === id)
+      if (!current) throw notFound('khoản chi')
+      assertFresh(current.updated_at, expectedUpdatedAt, 'Khoản chi')
+      await this.store.remove('expenses', [id])
+    })
+  }
+
   // ---------- Chi phí của nhóm ----------
 
   createCost(groupId: string, input: GroupCostInput): Promise<GroupCost> {
@@ -329,6 +502,8 @@ export class OrderService {
         ...EMPTY_GHN_FIELDS,
         paid_amount: input.paid_amount ?? 0,
         public_token: '',
+        delivered_at: input.status === 'delivered' ? now : '',
+        batch_id: '',
         created_at: now,
         updated_at: now,
       }
@@ -336,7 +511,7 @@ export class OrderService {
       await this.store.insert('items', items)
       await this.store.insert('orders', [order])
       const customer_history = historyByCustomer(snap.orders).get(customer.id) ?? emptyHistory()
-      return { ...order, customer, items, group_name: group.name, customer_history, ghn_bundle: [] }
+      return { ...order, customer, items, group_name: group.name, customer_history, ghn_bundle: [], batch_code: '' }
     })
   }
 
@@ -361,17 +536,21 @@ export class OrderService {
 
       const now = this.clock().toISOString()
       const customer = await this.upsertCustomer(snap, input.customer, now)
-      const order: Order = {
-        ...current,
-        group_id: group.id,
-        customer_id: customer.id,
-        items_summary: summarizeItems(items),
-        total_amount: total,
-        paid_amount: paid,
-        status: input.status,
-        note: input.note.trim(),
-        updated_at: now,
-      }
+      const order: Order = withDeliveredAt(
+        current,
+        {
+          ...current,
+          group_id: group.id,
+          customer_id: customer.id,
+          items_summary: summarizeItems(items),
+          total_amount: total,
+          paid_amount: paid,
+          status: input.status,
+          note: input.note.trim(),
+          updated_at: now,
+        },
+        now,
+      )
       // Thay toàn bộ dòng sản phẩm để không bao giờ cộng trùng số lượng cũ + mới.
       await this.store.remove(
         'items',
@@ -382,7 +561,8 @@ export class OrderService {
       const others = snap.orders.filter((o) => o.id !== id)
       const customer_history = historyByCustomer(others).get(customer.id) ?? emptyHistory()
       const ghn_bundle = bundledWith(ordersByShipment(snap.orders), order)
-      return { ...order, customer, items, group_name: group.name, customer_history, ghn_bundle }
+      const batch_code = snap.batches.find((b) => b.id === order.batch_id)?.code ?? ''
+      return { ...order, customer, items, group_name: group.name, customer_history, ghn_bundle, batch_code }
     })
   }
 
@@ -393,7 +573,8 @@ export class OrderService {
       if (!current) throw notFound('đơn hàng')
       assertFresh(current.updated_at, input.expected_updated_at, 'Đơn hàng')
       if (current.status === input.status) return current
-      const order: Order = { ...current, status: input.status as OrderStatus, updated_at: this.clock().toISOString() }
+      const now = this.clock().toISOString()
+      const order: Order = withDeliveredAt(current, { ...current, status: input.status as OrderStatus, updated_at: now }, now)
       await this.store.update('orders', order)
       return order
     })
@@ -417,7 +598,7 @@ export class OrderService {
         } else if (expected_updated_at && expected_updated_at !== current.updated_at) {
           skipped.push({ id, order_code: current.order_code, reason: 'Vừa được người khác cập nhật' })
         } else if (current.status !== input.status && !changed.some((o) => o.id === id)) {
-          changed.push({ ...current, status: input.status, updated_at: now })
+          changed.push(withDeliveredAt(current, { ...current, status: input.status, updated_at: now }, now))
         }
       }
       await this.store.updateMany('orders', changed)
@@ -519,6 +700,16 @@ export class OrderService {
 
 function assertFresh(actual: string, expected: string | undefined, what: string) {
   if (expected && expected !== actual) throw conflict(what)
+}
+
+function expenseFields(input: ExpenseInput) {
+  return {
+    date: input.date,
+    category: input.category,
+    name: input.name.trim(),
+    amount: input.amount,
+    note: input.note.trim(),
+  }
 }
 
 function costFields(input: GroupCostInput) {

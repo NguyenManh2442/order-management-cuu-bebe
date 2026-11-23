@@ -414,3 +414,30 @@ describe('gửi chung — các trường hợp biên', () => {
     expect(comp.status).toBe('packing')
   })
 })
+
+describe('in nhãn ghi dấu "đã in"', () => {
+  it('in gộp đánh dấu mọi đơn có vận đơn (kể cả đơn gửi chung), bỏ qua đơn chưa có', async () => {
+    const { orders, shipping, order } = await setup()
+    const second = await orders.createOrder({
+      group_id: order.group_id,
+      customer: { name: 'Lan', phone: '0912345678', facebook_url: '', address: '' },
+      items: [{ size: 'S', quantity: 1, unit_price: 200000 }],
+      status: 'pending',
+      note: '',
+    })
+    const lone = await orders.createOrder({
+      group_id: order.group_id,
+      customer: { name: 'Mai', phone: '0987654321', facebook_url: '', address: '' },
+      items: [{ size: 'L', quantity: 1, unit_price: 100000 }],
+      status: 'confirmed',
+      note: '',
+    })
+    await shipping.createShipment(order.id, shipment({ cod_amount: 500000, bundle: [{ id: second.id }] }))
+    const r = await shipping.printUrlMany([order.id, lone.id])
+    expect(r.count).toBe(1)
+    expect(r.skipped).toEqual([lone.order_code])
+    expect((await orders.getOrder(order.id)).printed_at).not.toBe('')
+    expect((await orders.getOrder(second.id)).printed_at).not.toBe('') // cùng gói
+    expect((await orders.getOrder(lone.id)).printed_at).toBe('')
+  })
+})

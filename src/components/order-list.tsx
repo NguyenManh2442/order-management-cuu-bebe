@@ -1,7 +1,8 @@
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from 'lucide-react'
+import { Boxes, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Printer } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import type { OrderView } from '@shared/types'
+import { isActiveShipment } from '@shared/ghn'
 import { OPEN_ORDER_STATUSES, amountDue } from '@shared/stats'
 import { Button } from '@/components/ui/button'
 import { cn, formatDateTime, formatNumber, formatVND } from '@/lib/utils'
@@ -37,6 +38,44 @@ function ItemsText({ order }: { order: OrderView }) {
 }
 
 /**
+ * Lô xuất của đơn + dấu đã in nhãn. "Chưa in" chỉ hiện với đơn đã có vận đơn (có nhãn để in),
+ * để khi in theo đợt không lẫn đơn nào đã in, đơn nào chưa.
+ */
+export function BatchPrintTags({ order, hideBatch, className }: { order: OrderView; hideBatch?: boolean; className?: string }) {
+  const showBatch = !hideBatch && !!order.batch_code
+  const needsPrint = isActiveShipment(order) && !order.printed_at
+  if (!showBatch && !order.printed_at && !needsPrint) return null
+  return (
+    <span className={cn('flex flex-wrap items-center gap-1 text-xs', className)}>
+      {showBatch && (
+        <Link
+          to={`/batches/${order.batch_id}`}
+          className="relative z-10 inline-flex items-center gap-1 rounded-md border border-sky-200 bg-sky-50 px-1.5 py-0.5 font-mono text-sky-800 hover:bg-sky-100"
+          title="Lô xuất — bấm để mở lô"
+        >
+          <Boxes className="size-3" />
+          {order.batch_code}
+        </Link>
+      )}
+      {order.printed_at ? (
+        <span
+          className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-emerald-800"
+          title={`In lúc ${formatDateTime(order.printed_at)}`}
+        >
+          <Printer className="size-3" /> Đã in
+        </span>
+      ) : (
+        needsPrint && (
+          <span className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-1.5 py-0.5 font-medium text-amber-900">
+            <Printer className="size-3" /> Chưa in
+          </span>
+        )
+      )}
+    </span>
+  )
+}
+
+/**
  * Đơn đang xử lý: "Cọc 100.000 ₫ · còn …" hoặc "Đã thanh toán".
  * Đơn đã giao / hủy / hoàn: chỉ ghi số đã trả (không còn gì để thu).
  */
@@ -56,10 +95,12 @@ function PaidNote({ order, className }: { order: OrderView; className?: string }
 function OrderCard({
   order,
   showGroup,
+  hideBatch,
   selection,
 }: {
   order: OrderView
   showGroup?: boolean
+  hideBatch?: boolean
   selection?: OrderSelection
 }) {
   const selected = selection?.isSelected(order.id)
@@ -100,7 +141,10 @@ function OrderCard({
         <p className="mt-1 line-clamp-1 text-sm text-muted-foreground">{order.customer.address}</p>
       )}
       {showGroup && <p className="mt-1 truncate text-xs text-muted-foreground">Nhóm: {order.group_name}</p>}
-      <GhnListAction order={order} className="mt-2" />
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <GhnListAction order={order} />
+        <BatchPrintTags order={order} hideBatch={hideBatch} />
+      </div>
       <div className="mt-2 flex items-end justify-between gap-2">
         <ItemsText order={order} />
         <span className="shrink-0 font-semibold tabular-nums">{formatVND(order.total_amount)}</span>
@@ -114,10 +158,12 @@ function OrderCard({
 function OrderTable({
   orders,
   showGroup,
+  hideBatch,
   selection,
 }: {
   orders: OrderView[]
   showGroup?: boolean
+  hideBatch?: boolean
   selection?: OrderSelection
 }) {
   const selectedCount = selection ? orders.filter((o) => selection.isSelected(o.id)).length : 0
@@ -193,6 +239,7 @@ function OrderTable({
               </td>
               <td className="whitespace-nowrap">
                 <GhnListAction order={o} compact />
+                <BatchPrintTags order={o} hideBatch={hideBatch} className="mt-1" />
               </td>
               <td className="hidden max-w-48 2xl:table-cell">
                 <span className="line-clamp-2 text-muted-foreground">{o.note}</span>
@@ -269,11 +316,14 @@ function Pagination({
 export function OrderList({
   orders,
   showGroup,
+  hideBatch,
   selection,
   className,
 }: {
   orders: OrderView[]
   showGroup?: boolean
+  /** Đang xem trong một lô: không cần nhắc lại mã lô ở từng đơn. */
+  hideBatch?: boolean
   /** Có = hiện ô chọn để thao tác hàng loạt. */
   selection?: OrderSelection
   className?: string
@@ -312,11 +362,11 @@ export function OrderList({
       )}
       <ul className="grid min-w-0 gap-3 md:grid-cols-2 xl:hidden">
         {visible.map((o) => (
-          <OrderCard key={o.id} order={o} showGroup={showGroup} selection={selection} />
+          <OrderCard key={o.id} order={o} showGroup={showGroup} hideBatch={hideBatch} selection={selection} />
         ))}
       </ul>
       <div className="hidden min-w-0 xl:block">
-        <OrderTable orders={visible} showGroup={showGroup} selection={selection} />
+        <OrderTable orders={visible} showGroup={showGroup} hideBatch={hideBatch} selection={selection} />
       </div>
       <Pagination page={page} pageCount={pageCount} total={orders.length} onChange={goTo} />
     </div>

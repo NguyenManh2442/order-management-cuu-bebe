@@ -24,7 +24,7 @@ export function ordersToCsv(orders: OrderView[]): string {
     'Đơn giá', 'Thành tiền dòng', 'Tổng đơn', 'Trạng thái', 'Ghi chú', 'Ngày tạo', 'Cập nhật',
     'Mã vận đơn GHN', 'Trạng thái GHN', 'Phí GHN', 'COD GHN',
     // Thêm sau: để cuối để không làm lệch vị trí các cột cũ.
-    'Đã trả', 'Còn phải thu',
+    'Đã trả', 'Còn phải thu', 'Lô xuất', 'Đã in nhãn',
   ]
   const lines = [header.map(cell).join(',')]
   for (const o of orders) {
@@ -54,6 +54,8 @@ export function ordersToCsv(orders: OrderView[]): string {
           cell(o.ghn_order_code ? o.ghn_cod_amount : ''),
           cell(o.paid_amount),
           cell(amountDueNow(o)),
+          cell(o.batch_code),
+          cell(o.printed_at ? formatDateTime(o.printed_at) : ''),
         ].join(','),
       )
     }

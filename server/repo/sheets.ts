@@ -1,10 +1,10 @@
 import { auth as googleAuth, sheets as googleSheets, type sheets_v4 } from '@googleapis/sheets'
-import { COST_BASES, COST_CATEGORIES, GROUP_STATUSES, ORDER_STATUSES } from '../../shared/constants'
+import { BATCH_STATUSES, COST_BASES, COST_CATEGORIES, EXPENSE_CATEGORIES, GROUP_STATUSES, ORDER_STATUSES } from '../../shared/constants'
 import { normalizePhone } from '../../shared/phone'
 import { AppError } from '../errors'
 import type { DataStore, RowOf, Snapshot, TableName } from './types'
 
-type Kind = 'text' | 'int' | 'num' | 'phone' | 'orderStatus' | 'groupStatus' | 'costCategory' | 'costBasis'
+type Kind = 'text' | 'int' | 'num' | 'phone' | 'orderStatus' | 'groupStatus' | 'costCategory' | 'costBasis' | 'expenseCategory' | 'batchStatus'
 interface TableDef {
   sheet: string
   columns: Record<string, Kind>
@@ -13,6 +13,11 @@ interface TableDef {
    * để bản mới deploy trước khi chạy "npm run init-sheets" không làm sập app.
    */
   optional?: string[]
+  /**
+   * Cột phụ (tự suy ra, có cách tính thay thế): sheet chưa có cột thì ghi bỏ qua lặng lẽ thay vì báo lỗi —
+   * để thao tác chính (ví dụ đổi trạng thái đơn) không hỏng khi chưa chạy "npm run init-sheets".
+   */
+  softOptional?: string[]
   /** Cả sheet là tùy chọn (thêm sau): chưa có thì coi như bảng rỗng, chỉ báo lỗi khi cần ghi. */
   optionalSheet?: boolean
 }
@@ -39,16 +44,30 @@ export const SHEET_DEFS: Record<TableName, TableDef> = {
       id: 'text', order_code: 'text', group_id: 'text', customer_id: 'text', items_summary: 'text', total_amount: 'int',
       status: 'orderStatus', note: 'text', ghn_order_code: 'text', ghn_client_code: 'text', ghn_status: 'text',
       ghn_status_at: 'text', ghn_fee: 'int', ghn_cod_amount: 'int', ghn_expected_delivery: 'text', ghn_to_address: 'text',
-      ghn_draft: 'text', paid_amount: 'int', public_token: 'text',
+      ghn_draft: 'text', paid_amount: 'int', public_token: 'text', delivered_at: 'text', batch_id: 'text', printed_at: 'text',
       created_at: 'text', updated_at: 'text',
     },
-    optional: ['paid_amount', 'public_token'],
+    optional: ['paid_amount', 'public_token', 'batch_id'],
+    softOptional: ['delivered_at', 'printed_at'],
   },
   costs: {
     sheet: 'GroupCosts',
     columns: {
       id: 'text', group_id: 'text', category: 'costCategory', name: 'text', quantity: 'num', unit: 'text',
       unit_price: 'int', basis: 'costBasis', note: 'text', created_at: 'text', updated_at: 'text',
+    },
+    optionalSheet: true,
+  },
+  batches: {
+    sheet: 'Batches',
+    columns: { id: 'text', code: 'text', note: 'text', status: 'batchStatus', created_at: 'text', updated_at: 'text' },
+    optionalSheet: true,
+  },
+  expenses: {
+    sheet: 'Expenses',
+    columns: {
+      id: 'text', date: 'text', category: 'expenseCategory', name: 'text', amount: 'int', note: 'text',
+      created_at: 'text', updated_at: 'text',
     },
     optionalSheet: true,
   },
@@ -77,6 +96,10 @@ function decode(kind: Kind, v: unknown): string | number {
     }
     case 'costCategory':
       return (COST_CATEGORIES as readonly unknown[]).includes(v) ? (v as string) : 'other'
+    case 'batchStatus':
+      return (BATCH_STATUSES as readonly unknown[]).includes(v) ? (v as string) : 'open'
+    case 'expenseCategory':
+      return (EXPENSE_CATEGORIES as readonly unknown[]).includes(v) ? (v as string) : 'other'
     case 'costBasis':
       return (COST_BASES as readonly unknown[]).includes(v) ? (v as string) : 'fixed'
     case 'phone':
@@ -168,14 +191,25 @@ export class SheetsStore implements DataStore {
         valueRanges = await this.fetchRanges(requested)
       } catch (err) {
         // Một sheet trong batch không tồn tại thì cả batch lỗi. Nếu có sheet tùy chọn, bỏ chúng ra và đọc lại.
+        const isMissing = (e: unknown) => String((e as Error)?.message).includes('Unable to parse range')
         const optional = requested.filter((t) => SHEET_DEFS[t].optionalSheet)
-        if (!optional.length || !String((err as Error)?.message).includes('Unable to parse range')) throw err
+        if (!optional.length || !isMissing(err)) throw err
         const withoutOptional = requested.filter((t) => !optional.includes(t))
-        valueRanges = await this.fetchRanges(withoutOptional)
-        // Đọc lại được → lỗi đúng là do sheet tùy chọn. Nếu thiếu cả sheet bắt buộc thì đã ném lỗi ở trên.
-        optional.forEach((t) => this.missingSheets.add(t))
+        const byTable = new Map<TableName, sheets_v4.Schema$ValueRange>()
+        ;(await this.fetchRanges(withoutOptional)).forEach((vr, i) => byTable.set(withoutOptional[i], vr))
+        // Đọc lại được → lỗi đúng là do sheet tùy chọn (thiếu sheet bắt buộc thì đã ném lỗi ở trên).
+        // Dò riêng từng sheet tùy chọn: có thể chỉ một trong số chúng chưa được tạo.
+        for (const t of optional) {
+          try {
+            byTable.set(t, (await this.fetchRanges([t]))[0] ?? {})
+          } catch (e) {
+            if (!isMissing(e)) throw e
+            this.missingSheets.add(t)
+          }
+        }
         this.missingCheckedAt = Date.now()
-        requested = withoutOptional
+        requested = requested.filter((t) => byTable.has(t))
+        valueRanges = requested.map((t) => byTable.get(t) ?? {})
       }
     } catch (err) {
       wrapGoogleError(err)
@@ -193,7 +227,9 @@ export class SheetsStore implements DataStore {
         data[table] = { header: Object.keys(def.columns), rows: [], missing: true }
         return
       }
-      const missing = Object.keys(def.columns).filter((c) => !header.includes(c) && !def.optional?.includes(c))
+      const missing = Object.keys(def.columns).filter(
+        (c) => !header.includes(c) && !def.optional?.includes(c) && !def.softOptional?.includes(c),
+      )
       if (missing.length) {
         throw new AppError(503, `Sheet "${def.sheet}" thiếu cột: ${missing.join(', ')}. Chạy "npm run init-sheets".`)
       }

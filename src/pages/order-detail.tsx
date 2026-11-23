@@ -1,11 +1,14 @@
-import { Ban, MapPin, MessageCircle, Pencil, Phone, Trash2 } from 'lucide-react'
+import { Ban, MapPin, Pencil, Phone, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
 import { toast } from 'sonner'
 import { codMismatch } from '@shared/ghn'
 import { OPEN_ORDER_STATUSES, amountDueNow } from '@shared/stats'
+import { FacebookLink } from '@/components/contact-links'
 import { CustomerRiskBanner } from '@/components/customer-risk'
 import { GhnShipmentCard } from '@/components/ghn-shipment'
+import { MessageCustomerButton } from '@/components/message-customer'
+import { BatchPrintTags } from '@/components/order-list'
 import { PageHeader } from '@/components/page-header'
 import { PublicLinkCard } from '@/components/public-link'
 import { sizeTone } from '@/components/stats'
@@ -143,7 +146,10 @@ export function OrderDetailPage() {
               <CustomerRiskBanner history={order.customer_history} />
               <div>
                 <div className="font-semibold">{c.name}</div>
-                <div className="text-sm text-muted-foreground">{c.phone}</div>
+                <div className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground">
+                  {c.phone}
+                  <FacebookLink url={c.facebook_url} label="Trang Facebook" />
+                </div>
               </div>
               {c.address && (
                 <p className="flex gap-2 text-sm">
@@ -157,17 +163,7 @@ export function OrderDetailPage() {
                     <Phone /> Gọi điện
                   </a>
                 </Button>
-                {c.facebook_url ? (
-                  <Button asChild size="lg" variant="outline" className="md:h-10 md:text-sm">
-                    <a href={c.facebook_url} target="_blank" rel="noopener noreferrer">
-                      <MessageCircle /> Facebook
-                    </a>
-                  </Button>
-                ) : (
-                  <Button size="lg" variant="outline" disabled className="md:h-10 md:text-sm">
-                    Chưa có FB
-                  </Button>
-                )}
+                <MessageCustomerButton order={order} className="md:h-10 md:text-sm" />
               </div>
             </CardContent>
           </Card>
@@ -178,6 +174,7 @@ export function OrderDetailPage() {
               Sửa đơn trong app không cập nhật sang GHN — sửa COD trên trang GHN, hoặc hủy vận đơn rồi tạo lại.
             </div>
           )}
+          <BatchPrintTags order={order} className="-mb-1" />
           <GhnShipmentCard order={order} />
           <PublicLinkCard order={order} />
 

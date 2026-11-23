@@ -202,3 +202,82 @@ describe('Sửa sau review', () => {
     expect(codMismatch({ ...base, paid_amount: 200, ghn_cod_amount: 500, status: 'delivered' })).toBe(false)
   })
 })
+
+describe('Doanh thu theo tháng: mốc "đã giao"', () => {
+  it('ghi delivered_at khi chuyển sang Đã giao (đổi trạng thái, hàng loạt, sửa đơn), xóa khi hoàn', async () => {
+    const s = setup()
+    const g = await s.createGroup(groupInput)
+    const a = await s.createOrder(input(g.id))
+    const delivered = await s.updateOrderStatus(a.id, { status: 'delivered' })
+    expect(delivered.delivered_at).toBe(delivered.updated_at)
+    const returned = await s.updateOrderStatus(a.id, { status: 'returned' })
+    expect(returned.delivered_at).toBe('')
+
+    const b = await s.createOrder(input(g.id, { status: 'delivered' }))
+    expect(b.delivered_at).toBe(b.created_at)
+    const edited = await s.updateOrder(b.id, input(g.id, { status: 'delivered', note: 'sửa', expected_updated_at: b.updated_at }))
+    expect(edited.delivered_at).toBe(b.created_at) // vẫn Đã giao: giữ mốc cũ
+
+    const c = await s.createOrder(input(g.id))
+    await s.bulkUpdateStatus({ status: 'delivered', orders: [{ id: c.id }] })
+    expect((await s.getOrder(c.id)).delivered_at).not.toBe('')
+  })
+})
+
+describe('Chi phí ngoài', () => {
+  const expense = { date: '2026-11-05', category: 'ads' as const, name: ' Quảng cáo FB ', amount: 500000, note: '' }
+
+  it('thêm / sửa / xóa, danh sách mới nhất trước, chống ghi đè', async () => {
+    const s = setup()
+    const a = await s.createExpense(expense)
+    expect(a.name).toBe('Quảng cáo FB')
+    const b = await s.createExpense({ ...expense, date: '2026-11-20', name: 'Máy in nhãn', category: 'tools' })
+    expect((await s.listExpenses()).map((e) => e.id)).toEqual([b.id, a.id])
+
+    const updated = await s.updateExpense(a.id, { ...expense, amount: 600000, expected_updated_at: a.updated_at })
+    expect(updated.amount).toBe(600000)
+    await expect(s.updateExpense(a.id, { ...expense, expected_updated_at: a.updated_at })).rejects.toMatchObject({ status: 409 })
+
+    await s.deleteExpense(b.id, b.updated_at)
+    expect((await s.listExpenses()).map((e) => e.id)).toEqual([a.id])
+  })
+})
+
+describe('Lô xuất', () => {
+  it('tạo lô kèm đơn, mã theo ngày, chuyển đơn sang lô khác, bỏ khỏi lô, xóa lô chỉ gỡ đơn', async () => {
+    const s = setup()
+    const g = await s.createGroup(groupInput)
+    const [a, b, c] = [await s.createOrder(input(g.id)), await s.createOrder(input(g.id)), await s.createOrder(input(g.id))]
+
+    const lo1 = await s.createBatch({ note: 'Sáng thứ 2', order_ids: [a.id, b.id] })
+    expect(lo1.code).toBe('LX261201-01')
+    expect((await s.getOrder(a.id)).batch_code).toBe('LX261201-01')
+    expect((await s.getOrder(a.id)).updated_at).toBe(a.updated_at) // xếp lô không tính là sửa đơn
+
+    const lo2 = await s.createBatch({ note: '', order_ids: [] })
+    expect(lo2.code).toBe('LX261201-02')
+    expect(await s.setBatchOrders(lo2.id, { action: 'add', order_ids: [b.id, c.id] })).toEqual({ changed: 2, moved: 1 })
+    expect((await s.getBatch(lo1.id)).orders.map((o) => o.id)).toEqual([a.id])
+
+    await s.setBatchOrders(lo2.id, { action: 'remove', order_ids: [c.id] })
+    expect((await s.getOrder(c.id)).batch_id).toBe('')
+
+    const [summary] = (await s.listBatches()).filter((x) => x.id === lo2.id)
+    expect(summary).toMatchObject({ order_count: 1, item_count: 2, shipped_count: 0 })
+
+    await s.deleteBatch(lo2.id)
+    expect((await s.getOrder(b.id)).batch_id).toBe('')
+    expect((await s.listBatches()).map((x) => x.id)).toEqual([lo1.id])
+  })
+
+  it('đánh dấu / bỏ đánh dấu đã in', async () => {
+    const s = setup()
+    const g = await s.createGroup(groupInput)
+    const a = await s.createOrder(input(g.id))
+    expect(await s.setPrinted([a.id], true)).toEqual({ changed: 1 })
+    expect((await s.getOrder(a.id)).printed_at).not.toBe('')
+    expect(await s.setPrinted([a.id], true)).toEqual({ changed: 0 })
+    await s.setPrinted([a.id], false)
+    expect((await s.getOrder(a.id)).printed_at).toBe('')
+  })
+})

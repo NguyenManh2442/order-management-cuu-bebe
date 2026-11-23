@@ -1,4 +1,4 @@
-import { ChartColumn, ClipboardList, Layers, LogOut, Plus, Truck, Users } from 'lucide-react'
+import { Boxes, ChartColumn, ClipboardList, Layers, LogOut, Plus, Truck, Users, Wallet } from 'lucide-react'
 import { NavLink, Outlet, useLocation, useMatch } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { useConfig, useLogout, useMe } from '@/lib/queries'
@@ -9,6 +9,16 @@ const NAV = [
   { to: '/orders', label: 'Đơn hàng', short: 'Đơn hàng', icon: ClipboardList },
   { to: '/customers', label: 'Khách hàng', short: 'Khách', icon: Users },
   { to: '/reports', label: 'Báo cáo', short: 'Báo cáo', icon: ChartColumn },
+]
+/**
+ * Thanh bên (máy tính) có thêm Lô xuất và Thu chi; điện thoại vào Lô xuất từ trang Đơn hàng,
+ * Thu chi từ trang Báo cáo, vì thanh dưới đã đủ 5 ô.
+ */
+const SIDEBAR = [
+  ...NAV.slice(0, 2),
+  { to: '/batches', label: 'Lô xuất', short: 'Lô xuất', icon: Boxes },
+  ...NAV.slice(2),
+  { to: '/finance', label: 'Thu chi', short: 'Thu chi', icon: Wallet },
 ]
 
 /** Nút "Tạo đơn" mở sẵn nhóm đang xem để thêm đơn nhanh. */
@@ -42,7 +52,7 @@ export function AppLayout() {
           </Button>
         </div>
         <nav className="mt-4 grid gap-1 px-3">
-          {NAV.map(({ to, label, icon: Icon }) => (
+          {SIDEBAR.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}

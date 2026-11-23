@@ -3,7 +3,12 @@ import { Router, type Request } from 'express'
 import type { ZodType } from 'zod'
 import {
   bulkOrderStatusInputSchema,
+  batchCreateInputSchema,
+  batchOrdersInputSchema,
+  batchUpdateInputSchema,
+  expenseInputSchema,
   ghnBulkPrintInputSchema,
+  printedInputSchema,
   ghnCancelInputSchema,
   ghnDraftSchema,
   ghnSettingsInputSchema,
@@ -213,6 +218,45 @@ export function createApiRouter(service: OrderService, ghnRuntime: GhnRuntime): 
   })
   api.put('/groups/:id', async (req, res) => {
     res.json(await service.updateGroup(param(req, 'id'), parse(groupInputSchema, req.body)))
+  })
+
+  api.get('/batches', async (_req, res) => {
+    res.json(await service.listBatches())
+  })
+  api.get('/batches/:id', async (req, res) => {
+    res.json(await service.getBatch(param(req, 'id')))
+  })
+  api.post('/batches', async (req, res) => {
+    res.status(201).json(await service.createBatch(parse(batchCreateInputSchema, req.body)))
+  })
+  api.put('/batches/:id', async (req, res) => {
+    res.json(await service.updateBatch(param(req, 'id'), parse(batchUpdateInputSchema, req.body)))
+  })
+  api.delete('/batches/:id', async (req, res) => {
+    await service.deleteBatch(param(req, 'id'))
+    res.status(204).end()
+  })
+  api.post('/batches/:id/orders', async (req, res) => {
+    res.json(await service.setBatchOrders(param(req, 'id'), parse(batchOrdersInputSchema, req.body)))
+  })
+  api.post('/orders/printed', async (req, res) => {
+    const { order_ids, printed } = parse(printedInputSchema, req.body)
+    res.json(await service.setPrinted(order_ids, printed))
+  })
+
+  api.get('/expenses', async (_req, res) => {
+    res.json(await service.listExpenses())
+  })
+  api.post('/expenses', async (req, res) => {
+    res.status(201).json(await service.createExpense(parse(expenseInputSchema, req.body)))
+  })
+  api.put('/expenses/:id', async (req, res) => {
+    res.json(await service.updateExpense(param(req, 'id'), parse(expenseInputSchema, req.body)))
+  })
+  api.delete('/expenses/:id', async (req, res) => {
+    const expected = typeof req.query.expected_updated_at === 'string' ? req.query.expected_updated_at : undefined
+    await service.deleteExpense(param(req, 'id'), expected)
+    res.status(204).end()
   })
 
   api.post('/groups/:id/costs', async (req, res) => {

@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Settings } from 'lucide-react'
+import { Boxes, Plus, RefreshCw, Settings } from 'lucide-react'
 import { Link } from 'react-router'
 import { toast } from 'sonner'
 import { BulkActionBar, useOrderSelection } from '@/components/bulk-actions'
@@ -9,13 +9,14 @@ import { PageHeader } from '@/components/page-header'
 import { EmptyState, ErrorState, ListSkeleton } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { errorMessage } from '@/lib/api'
-import { useConfig, useGroups, useOrders, useSyncAllGhn } from '@/lib/queries'
+import { useBatches, useConfig, useGroups, useOrders, useSyncAllGhn } from '@/lib/queries'
 import { dateKey } from '@/lib/utils'
 
 export function OrdersPage() {
   const { data: orders, isPending, error, refetch } = useOrders()
   const { data: groups } = useGroups()
   const { filters, setFilter, clear, filtered, sizeOptions, dupCustomerCount } = useOrderFilters(orders)
+  const { data: batches } = useBatches()
   const { data: config } = useConfig()
   const syncGhn = useSyncAllGhn()
   const selection = useOrderSelection(filtered)
@@ -47,6 +48,11 @@ export function OrdersPage() {
                 <RefreshCw /> <span className="hidden sm:inline">Đồng bộ GHN</span>
               </Button>
             )}
+            <Button asChild variant="outline" title="Gom đơn theo đợt xuất để tạo vận đơn, in nhãn cùng lúc">
+              <Link to="/batches">
+                <Boxes /> <span className="hidden sm:inline">Lô xuất</span>
+              </Link>
+            </Button>
             <Button asChild variant="outline" size="icon" aria-label="Thiết lập GHN" title="Thiết lập Giao Hàng Nhanh">
               <Link to="/settings/ghn">
                 <Settings />
@@ -69,6 +75,7 @@ export function OrdersPage() {
         groups={groups}
         sizeOptions={sizeOptions}
         dupCustomerCount={dupCustomerCount}
+        batches={batches}
       />
       <div className="mt-4">
         {isPending ? (

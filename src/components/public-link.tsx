@@ -11,7 +11,7 @@ import { usePublicLink } from '@/lib/queries'
 export const publicOrderUrl = (token: string) => `${window.location.origin}/t/${token}`
 
 /** true = đã chép được. Safari chặn chép nếu không ngay sau thao tác bấm (ví dụ sau khi chờ tạo link). */
-async function copyText(text: string): Promise<boolean> {
+export async function copyText(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
     return true

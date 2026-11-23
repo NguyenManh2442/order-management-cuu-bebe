@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import type { GhnEnv, GhnPlace, GhnQuote, GhnSettingsView, GhnShop } from '@shared/ghn'
 import type {
+  BatchCreateInput,
+  BatchOrdersInput,
+  BatchUpdateInput,
+  ExpenseInput,
   GhnDraft,
   GhnSettingsInput,
   GhnShipmentInput,
@@ -11,11 +15,15 @@ import type {
 } from '@shared/schemas'
 import type {
   AppConfig,
+  Batch,
+  BatchDetail,
+  BatchSummary,
   BulkStatusResult,
   Customer,
   CustomerDetail,
   CustomerLookup,
   CustomerSummary,
+  Expense,
   GroupCost,
   GroupDetail,
   GroupWithStats,
@@ -38,6 +46,9 @@ export const keys = {
   customers: ['customers'] as const,
   customer: (id: string) => ['customers', id] as const,
   phone: (phone: string) => ['customers', 'lookup', phone] as const,
+  expenses: ['expenses'] as const,
+  batches: ['batches'] as const,
+  batch: (id: string) => ['batches', id] as const,
   ghnSettings: ['ghn', 'settings'] as const,
   ghnProvinces: ['ghn', 'provinces'] as const,
   ghnWards: (provinceId: number) => ['ghn', 'wards', provinceId] as const,
@@ -79,7 +90,7 @@ export function lookupCustomerQuery(phone: string) {
   }
 }
 
-/** Mọi thay đổi đơn hàng đều ảnh hưởng thống kê nhóm, danh sách đơn và khách. */
+/** Mọi thay đổi đơn hàng đều ảnh hưởng thống kê nhóm, danh sách đơn, khách và tiến độ lô xuất. */
 function useInvalidateAll() {
   const qc = useQueryClient()
   return () =>
@@ -87,6 +98,7 @@ function useInvalidateAll() {
       qc.invalidateQueries({ queryKey: keys.groups }),
       qc.invalidateQueries({ queryKey: keys.orders }),
       qc.invalidateQueries({ queryKey: keys.customers }),
+      qc.invalidateQueries({ queryKey: keys.batches }),
     ])
 }
 
@@ -138,6 +150,25 @@ export function useDeleteCost(groupId: string) {
     mutationFn: (c: Pick<GroupCost, 'id' | 'updated_at'>) =>
       api.del(`/groups/${groupId}/costs/${c.id}?expected_updated_at=${encodeURIComponent(c.updated_at)}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.group(groupId) }),
+  })
+}
+
+export const useExpenses = () => useQuery({ queryKey: keys.expenses, queryFn: () => api.get<Expense[]>('/expenses') })
+
+export function useSaveExpense(id?: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ExpenseInput) => (id ? api.put<Expense>(`/expenses/${id}`, input) : api.post<Expense>('/expenses', input)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.expenses }),
+  })
+}
+
+export function useDeleteExpense() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (e: Pick<Expense, 'id' | 'updated_at'>) =>
+      api.del(`/expenses/${e.id}?expected_updated_at=${encodeURIComponent(e.updated_at)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.expenses }),
   })
 }
 
@@ -296,14 +327,69 @@ export const usePublicOrder = (token: string) =>
     retry: false,
   })
 
-export const useBulkPrintGhn = () =>
-  useMutation({
+/** In nhãn thì máy chủ ghi dấu "đã in" cho đơn: tải lại danh sách để hiện dấu. */
+export function useBulkPrintGhn() {
+  const invalidate = useInvalidateAll()
+  return useMutation({
     mutationFn: (orderIds: string[]) =>
       api.post<{ url: string; count: number; skipped: string[] }>('/ghn/print', { order_ids: orderIds }),
+    onSuccess: invalidate,
   })
+}
 
-export const usePrintGhnLabel = () =>
-  useMutation({ mutationFn: (orderId: string) => api.post<{ url: string }>(`/orders/${orderId}/ghn/print`) })
+export function usePrintGhnLabel() {
+  const invalidate = useInvalidateAll()
+  return useMutation({
+    mutationFn: (orderId: string) => api.post<{ url: string }>(`/orders/${orderId}/ghn/print`),
+    onSuccess: invalidate,
+  })
+}
+
+export function useSetPrinted() {
+  const invalidate = useInvalidateAll()
+  return useMutation({
+    mutationFn: (v: { order_ids: string[]; printed: boolean }) => api.post<{ changed: number }>('/orders/printed', v),
+    onSettled: invalidate,
+  })
+}
+
+// ---------- Lô xuất ----------
+
+export const useBatches = () => useQuery({ queryKey: keys.batches, queryFn: () => api.get<BatchSummary[]>('/batches') })
+
+export const useBatch = (id: string) =>
+  useQuery({ queryKey: keys.batch(id), queryFn: () => api.get<BatchDetail>(`/batches/${id}`), enabled: !!id })
+
+export function useCreateBatch() {
+  const invalidate = useInvalidateAll()
+  return useMutation({ mutationFn: (input: BatchCreateInput) => api.post<Batch>('/batches', input), onSuccess: invalidate })
+}
+
+export function useUpdateBatch(id: string) {
+  const invalidate = useInvalidateAll()
+  return useMutation({ mutationFn: (input: BatchUpdateInput) => api.put<Batch>(`/batches/${id}`, input), onSuccess: invalidate })
+}
+
+export function useDeleteBatch() {
+  const qc = useQueryClient()
+  const invalidate = useInvalidateAll()
+  return useMutation({
+    mutationFn: (id: string) => api.del(`/batches/${id}`),
+    onSuccess: (_d, id) => {
+      qc.removeQueries({ queryKey: keys.batch(id) })
+      return invalidate()
+    },
+  })
+}
+
+export function useBatchOrders() {
+  const invalidate = useInvalidateAll()
+  return useMutation({
+    mutationFn: (v: { batchId: string } & BatchOrdersInput) =>
+      api.post<{ changed: number; moved: number }>(`/batches/${v.batchId}/orders`, { action: v.action, order_ids: v.order_ids }),
+    onSettled: invalidate,
+  })
+}
 
 export function useSyncAllGhn() {
   const invalidate = useInvalidateAll()

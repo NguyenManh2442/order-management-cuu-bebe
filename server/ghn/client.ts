@@ -443,8 +443,9 @@ export class FakeGhnClient implements GhnClient {
     o.updated = new Date().toISOString()
   }
 
+  /** Demo không có nhãn thật: mở trang trống để vẫn thử được luồng in (đánh dấu đã in). */
   async printUrl(codes: string[]): Promise<string> {
     codes.forEach((c) => this.get(c))
-    throw new AppError(400, 'Chế độ demo (GHN giả lập) không có nhãn vận đơn để in.')
+    return 'about:blank'
   }
 }
