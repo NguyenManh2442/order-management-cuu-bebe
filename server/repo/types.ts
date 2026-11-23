@@ -1,4 +1,4 @@
-import type { Customer, GroupCost, Order, OrderGroup, OrderItem } from '../../shared/types'
+import type { Batch, Customer, Expense, GroupCost, Order, OrderGroup, OrderItem } from '../../shared/types'
 
 export interface Snapshot {
   customers: Customer[]
@@ -6,6 +6,8 @@ export interface Snapshot {
   orders: Order[]
   items: OrderItem[]
   costs: GroupCost[]
+  expenses: Expense[]
+  batches: Batch[]
 }
 
 export type TableName = keyof Snapshot

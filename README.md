@@ -13,8 +13,12 @@ Web app quản lý đơn hàng cho người bán online qua Facebook. Ưu tiên 
 - **Tiền cọc / chuyển khoản**: ghi số tiền khách đã trả trước; app tính **còn phải thu**, form GHN tự điền thu hộ (COD) = phần còn lại.
 - **Cảnh báo khách hay hoàn/hủy đơn**: nhập SĐT khách từng hoàn hàng sẽ hiện cảnh báo (gợi ý thu cọc); nhãn "Từng hoàn N" trong danh sách đơn và khách.
 - **Thao tác hàng loạt**: tick chọn nhiều đơn → đổi trạng thái, gửi GHN (đơn đã có địa chỉ GHN lưu sẵn hoặc nháp), in gộp nhãn GHN.
+- **Lô xuất** (`/batches`, thanh bên trên máy tính; trên điện thoại bấm nút **Lô xuất** ở đầu trang Đơn hàng): gom các đơn của một đợt xuất hàng vào một lô (mã `LX yymmdd-01`). Ở trang Đơn hàng lọc **Lô xuất → Chưa vào lô**, tick chọn đơn → **Vào lô xuất** (lô đang mở hoặc lô mới; mỗi đơn thuộc một lô, đơn ở lô khác được chuyển sang). Trong lô: tiến độ đã có vận đơn / đã in nhãn, tổng size để soạn hàng, **Tạo vận đơn** cho các đơn chưa có, **In nhãn chưa in** (hoặc in lại cả lô), lọc Chưa có vận đơn / Chưa in / Đã in, đổi trạng thái hay bỏ đơn khỏi lô qua thanh thao tác, xuất CSV, hoàn tất / xóa lô (xóa lô chỉ gỡ đơn ra, không xóa đơn).
+- **Dấu đã in nhãn**: in nhãn GHN (từng đơn, in gộp hay trong lô) thì đơn được ghi dấu **Đã in**; đơn có vận đơn mà chưa in hiện **Chưa in** trên danh sách để không lẫn khi in theo đợt. In hỏng / in ngoài app thì chọn đơn → **Đã in?** để đánh dấu lại.
+- **Thu chi** (`/finance`, thanh bên trên máy tính; trên điện thoại vào từ trang Báo cáo): doanh thu thực tế theo tháng / năm = tổng tiền đơn **Đã giao**, tính vào tháng giao hàng (giờ Việt Nam), trừ **chi phí ngoài** (quảng cáo, bao bì, vận chuyển… — chi phí chung, không thuộc nhóm hàng) để ra phần còn lại. Bấm một tháng để xem / thêm khoản chi của tháng đó.
 - **Báo cáo**: tổng đơn, số đơn theo trạng thái, doanh thu từ đơn đã giao, tiền còn phải thu; mục **Cần gọi khách** liệt kê đơn GHN giao thất bại.
 - **Link tra cứu cho khách**: trong chi tiết đơn tạo link `/t/<mã>` gửi khách tự xem trạng thái, số tiền còn phải trả, mã vận đơn và địa chỉ giao hàng — không cần đăng nhập, chỉ ai có link xem được (kể cả người được khách chuyển tiếp link, nên link lộ thì bấm **Đổi link**), SĐT bị che bớt; đổi link thì link cũ hết hiệu lực.
+- **Nhắn tin cho khách theo mẫu**: trong chi tiết đơn bấm **Nhắn tin** → chọn xưng hô (chị / anh / bạn) và mẫu (Đã lên đơn, Gửi link theo dõi, Đã gửi hàng, Nhắc chuyển khoản, Cảm ơn); tin tự điền tên, mã đơn, sản phẩm, tiền, mã vận đơn, link tra cứu (tự tạo nếu chưa có), sửa được trước khi gửi. **Sao chép & mở Messenger** chép tin rồi mở khung chat với nick Facebook của khách (link facebook.com/… hoặc profile.php?id=… đổi sang m.me) để dán và gửi — Messenger không cho web tự gửi hay tự điền tin nhắn tài khoản cá nhân. Khách chưa có Facebook thì sao chép để gửi qua Zalo / SMS.
 - **Giao Hàng Nhanh (GHN)**: từ chi tiết đơn bấm **Tạo đơn GHN**, chọn lại địa chỉ theo danh mục của GHN (Tỉnh/Thành → Phường/Xã, hệ hành chính mới), xem phí trước khi gửi; trạng thái vận đơn tự cập nhật về đơn qua webhook hoặc nút **Đồng bộ GHN**; in nhãn, hủy vận đơn. Xem mục [Giao Hàng Nhanh](#giao-hàng-nhanh-ghn).
 - Card trên điện thoại, bảng trên desktop; nút gọi `tel:` và mở Facebook; cài ra màn hình chính (PWA).
 
@@ -85,8 +89,10 @@ Lệnh này tạo 4 sheet `Customers`, `OrderGroups`, `Orders`, `OrderItems` cù
 |---|---|
 | `Customers` | id, name, phone, facebook_url, address, ghn_address, created_at, updated_at |
 | `OrderGroups` | id, name, description, product_name, default_unit_price, status (`open`/`closed`), created_at, updated_at |
-| `Orders` | id, order_code, group_id, customer_id, items_summary, total_amount, status, note, ghn_order_code, ghn_client_code, ghn_status, ghn_status_at, ghn_fee, ghn_cod_amount, ghn_expected_delivery, ghn_to_address, ghn_draft, paid_amount, public_token, created_at, updated_at |
+| `Orders` | id, order_code, group_id, customer_id, items_summary, total_amount, status, note, ghn_order_code, ghn_client_code, ghn_status, ghn_status_at, ghn_fee, ghn_cod_amount, ghn_expected_delivery, ghn_to_address, ghn_draft, paid_amount, public_token, delivered_at, batch_id, printed_at, created_at, updated_at |
 | `GroupCosts` | id, group_id, category (`material`/`labor`/`other`), name, quantity, unit, unit_price, basis (`fixed`/`per_item`), note, created_at, updated_at |
+| `Expenses` | id, date (YYYY-MM-DD), category (`ads`/`shipping`/`packaging`/`salary`/`tools`/`other`), name, amount, note, created_at, updated_at |
+| `Batches` | id, code, note, status (`open`/`done`), created_at, updated_at |
 | `OrderItems` | id, order_id, product_name, size, quantity, unit_price, line_total, created_at |
 
 - Một nhóm có nhiều đơn; một khách có nhiều đơn (kể cả ở nhiều nhóm); một đơn có một hoặc nhiều dòng `OrderItems` (mỗi dòng một size).
@@ -98,12 +104,14 @@ Lệnh này tạo 4 sheet `Customers`, `OrderGroups`, `Orders`, `OrderItems` cù
 
 ### Nâng cấp khi đã có dữ liệu thật
 
-Bản mới cần 2 cột mới trong sheet `Orders` (`paid_amount`, `public_token`) và sheet mới `GroupCosts` (chi phí nhóm). Cách nâng cấp an toàn:
+Các bản nâng cấp thêm cột mới trong sheet `Orders` (`paid_amount`, `public_token`, `delivered_at`, `batch_id`, `printed_at`) và sheet mới `GroupCosts` (chi phí nhóm), `Expenses` (chi phí ngoài), `Batches` (lô xuất). Cách nâng cấp an toàn:
+
+**Deploy trên Vercel: không cần làm gì** — mỗi lần build, Vercel tự chạy init-sheets bằng env của project (chỉ khi `DATA_SOURCE=sheets`; đặt `SKIP_INIT_SHEETS=1` để tắt). Lỗi ở bước này không chặn deploy; xem log build dòng `✓ … đủ cột` / `+ … thêm cột`. Bản preview dùng chung spreadsheet cũng sẽ thêm cột vào sheet đó (vô hại). Tự host / chạy tay thì:
 
 1. Chạy `npm run init-sheets` trỏ vào spreadsheet thật (cùng `.env` production). Lệnh chỉ **tạo sheet còn thiếu và thêm cột vào cuối dòng tiêu đề**, không sửa/xóa dữ liệu; bản đang chạy vẫn hoạt động bình thường với cột/sheet mới.
 2. Deploy bản mới.
 
-Làm ngược thứ tự cũng không sập app: thiếu 2 cột thì app đọc như "chưa cọc, chưa có link", thiếu sheet `GroupCosts` thì coi như chưa nhập chi phí; chỉ khi lưu tiền cọc, tạo link hoặc thêm khoản chi mới báo "Chạy npm run init-sheets" (chạy xong dùng được ngay, không cần khởi động lại). Đơn cũ được coi là chưa cọc (COD = tổng đơn như trước).
+Làm ngược thứ tự cũng không sập app: thiếu 2 cột thì app đọc như "chưa cọc, chưa có link", thiếu sheet `GroupCosts` thì coi như chưa nhập chi phí; chỉ khi lưu tiền cọc, tạo link hoặc thêm khoản chi mới báo "Chạy npm run init-sheets" (chạy xong dùng được ngay, không cần khởi động lại). Đơn cũ được coi là chưa cọc (COD = tổng đơn như trước). Cột `delivered_at` (mốc tính doanh thu theo tháng) là cột phụ: chưa có thì app vẫn đổi trạng thái bình thường, chỉ bỏ qua việc ghi mốc (cột `printed_at` cũng vậy: thiếu thì in nhãn vẫn chạy, chỉ không ghi dấu đã in; thiếu cột `batch_id` / sheet `Batches` thì xếp đơn vào lô báo "Chạy npm run init-sheets"); đơn đã giao trước đó tính theo thời điểm GHN báo giao, không có thì theo lần cập nhật cuối.
 
 ### Chống ghi đè / ghi trùng
 
@@ -225,7 +233,7 @@ Cài app ra màn hình chính: Android Chrome → menu ⋮ → **Thêm vào màn
 | `npm test` | Unit test thống kê và nghiệp vụ |
 | `npm run typecheck` | Kiểm tra TypeScript |
 | `npm run build` / `npm start` | Build và chạy production |
-| `npm run init-sheets` | Tạo/bổ sung sheet và cột |
+| `npm run init-sheets` | Tạo/bổ sung sheet và cột (trên Vercel tự chạy khi build) |
 | `npm run hash-password -- <mk>` | Tạo mã băm mật khẩu |
 
 ## Cấu hình size

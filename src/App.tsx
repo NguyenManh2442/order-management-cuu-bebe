@@ -4,10 +4,14 @@ import { AppLayout } from '@/components/app-layout'
 import { EmptyState } from '@/components/states'
 import { Button } from '@/components/ui/button'
 import { useMe } from '@/lib/queries'
+import { BatchDetailPage } from '@/pages/batch-detail'
+import { BatchesPage } from '@/pages/batches'
 import { CostFormPage } from '@/pages/cost-form'
 import { GroupCostsPage } from '@/pages/group-costs'
 import { CustomerDetailPage } from '@/pages/customer-detail'
 import { CustomersPage } from '@/pages/customers'
+import { ExpenseFormPage } from '@/pages/expense-form'
+import { FinancePage } from '@/pages/finance'
 import { GroupDetailPage } from '@/pages/group-detail'
 import { GroupFormPage } from '@/pages/group-form'
 import { GroupsPage } from '@/pages/groups'
@@ -73,9 +77,14 @@ export const router = createBrowserRouter([
           { path: 'orders/:id', element: <OrderDetailPage /> },
           { path: 'orders/:id/edit', element: <OrderFormPage /> },
           { path: 'orders/:id/ship', element: <OrderShipPage /> },
+          { path: 'batches', element: <BatchesPage /> },
+          { path: 'batches/:id', element: <BatchDetailPage /> },
           { path: 'customers', element: <CustomersPage /> },
           { path: 'customers/:id', element: <CustomerDetailPage /> },
           { path: 'reports', element: <ReportsPage /> },
+          { path: 'finance', element: <FinancePage /> },
+          { path: 'finance/expenses/new', element: <ExpenseFormPage /> },
+          { path: 'finance/expenses/:id/edit', element: <ExpenseFormPage /> },
           { path: 'settings/ghn', element: <GhnSettingsPage /> },
           { path: '*', element: <NotFound /> },
         ],

@@ -1,6 +1,6 @@
 import type { OrderStatus } from '../../shared/constants'
 import { summarizeItems } from '../../shared/stats'
-import type { Customer, GroupCost, Order, OrderGroup, OrderItem } from '../../shared/types'
+import type { Customer, Expense, GroupCost, Order, OrderGroup, OrderItem } from '../../shared/types'
 import { EMPTY_GHN_FIELDS } from '../service'
 import type { Snapshot } from './types'
 
@@ -81,6 +81,8 @@ export function createDemoSnapshot(sizes: string[]): Snapshot {
       const status = g.status === 'closed' ? pick(['delivered', 'delivered', 'delivered', 'returned', 'cancelled'] as const) : pick(statusPool)
       const note = rand() < 0.25 ? pick(['Giao giờ hành chính', 'Gọi trước khi giao', 'Khách cọc 100k', 'Gói quà giúp shop']) : ''
       const total = its.reduce((s, i) => s + i.line_total, 0)
+      // Đơn đã giao: giao sau khi đặt 2–5 ngày (không quá hiện tại).
+      const deliveredAt = status === 'delivered' ? new Date(Math.min(now, Date.parse(t) + (2 + Math.floor(rand() * 4)) * 86_400_000)).toISOString() : ''
       orders.push({
         id: orderId,
         order_code: `DEMO-${String(++seq).padStart(3, '0')}`,
@@ -94,8 +96,10 @@ export function createDemoSnapshot(sizes: string[]): Snapshot {
         // Một số đơn đã cọc / chuyển khoản trước để thử phần "còn phải thu".
         paid_amount: note === 'Khách cọc 100k' ? Math.min(100_000, total) : rand() < 0.15 ? total : 0,
         public_token: '',
+        delivered_at: deliveredAt,
+        batch_id: '',
         created_at: t,
-        updated_at: t,
+        updated_at: deliveredAt || t,
       })
     }
   }
@@ -132,5 +136,20 @@ export function createDemoSnapshot(sizes: string[]): Snapshot {
       updated_at: g.created_at,
     })),
   )
-  return { customers, groups, orders, items, costs }
+  // Chi phí ngoài mẫu cho 3 tháng gần nhất: [ngày trước, loại, tên, số tiền]
+  const expenseSeeds: [number, Expense['category'], string, number][] = [
+    [3, 'ads', 'Chạy quảng cáo Facebook', 1_500_000],
+    [5, 'packaging', 'Túi zip, hộp giấy', 450_000],
+    [12, 'shipping', 'Ship hàng mẫu cho thợ', 120_000],
+    [20, 'shipping', 'Phí ship hoàn hàng', 180_000],
+    [35, 'ads', 'Chạy quảng cáo Facebook', 1_200_000],
+    [40, 'tools', 'Máy in nhãn', 1_350_000],
+    [50, 'packaging', 'Băng keo, tem nhãn', 220_000],
+    [65, 'salary', 'Thuê người đóng gói', 2_000_000],
+  ]
+  const expenses: Expense[] = expenseSeeds.map(([ago, category, name, amount]) => {
+    const t = daysAgo(ago)
+    return { id: id('x'), date: t.slice(0, 10), category, name, amount, note: '', created_at: t, updated_at: t }
+  })
+  return { customers, groups, orders, items, costs, expenses, batches: [] }
 }

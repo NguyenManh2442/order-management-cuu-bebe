@@ -1,10 +1,10 @@
 import { Download, Filter, Search, Users, X } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
-import { ORDER_STATUSES, type OrderStatus } from '@shared/constants'
+import { BATCH_STATUS_LABELS, ORDER_STATUSES, type OrderStatus } from '@shared/constants'
 import { normalizeSize } from '@shared/phone'
 import { sortSizes } from '@shared/stats'
-import type { OrderView } from '@shared/types'
+import type { BatchSummary, OrderView } from '@shared/types'
 import { Button } from '@/components/ui/button'
 import { ORDER_STATUS_OPTIONS } from '@/components/status'
 import { Dropdown } from '@/components/ui/dropdown'
@@ -24,6 +24,8 @@ export interface OrderFilterState {
   size: string
   /** '1' = chỉ đơn của khách có từ 2 đơn trở lên (trong phạm vi đang xem), xếp liền nhau theo khách. */
   dup: string
+  /** '' = mọi đơn, 'none' = chưa vào lô xuất nào, còn lại = id lô. */
+  batch: string
 }
 
 export interface SizeOption {
@@ -45,6 +47,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     group: params.get('group') ?? '',
     size: normalizeSize(params.get('size') ?? ''),
     dup: params.get('dup') === '1' ? '1' : '',
+    batch: params.get('batch') ?? '',
   }
   const { data: config } = useConfig()
 
@@ -65,13 +68,13 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     setParams(
       (prev) => {
         const next = new URLSearchParams(prev)
-        for (const k of ['q', 'status', 'from', 'to', 'group', 'size', 'dup', 'page']) next.delete(k)
+        for (const k of ['q', 'status', 'from', 'to', 'group', 'size', 'dup', 'batch', 'page']) next.delete(k)
         return next
       },
       { replace: true },
     )
 
-  const { q, status, from, to, group, size, dup } = filters
+  const { q, status, from, to, group, size, dup, batch } = filters
   /**
    * Số đơn của từng khách trong phạm vi đang xem (theo nhóm đang lọc), không tính đơn đã hủy —
    * khách đặt trùng là khách có từ 2 đơn trở lên.
@@ -93,6 +96,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
     const list = orders.filter((o) => {
       if (status && o.status !== status) return false
       if (group && o.group_id !== group) return false
+      if (batch && o.batch_id !== (batch === 'none' ? '' : batch)) return false
       if (size && !o.items.some((i) => normalizeSize(i.size) === size)) return false
       if (dup && (o.status === 'cancelled' || (customerCounts.get(o.customer_id) ?? 0) < 2)) return false
       if (from || to) {
@@ -116,7 +120,7 @@ export function useOrderFilters(orders: OrderView[] | undefined) {
       if (!rank.has(o.customer_id)) rank.set(o.customer_id, i)
     })
     return [...list].sort((a, b) => rank.get(a.customer_id)! - rank.get(b.customer_id)!)
-  }, [orders, q, status, from, to, group, size, dup, customerCounts])
+  }, [orders, q, status, from, to, group, size, dup, batch, customerCounts])
 
   /** Size để chọn: size cấu hình + size lạ đã có trong đơn, kèm số đơn mỗi size. */
   const sizeOptions = useMemo<SizeOption[]>(() => {
@@ -138,6 +142,7 @@ export function OrderFilters({
   groups,
   sizeOptions,
   dupCustomerCount,
+  batches,
   searchPlaceholder = 'Tìm mã đơn, tên khách, SĐT…',
 }: {
   filters: OrderFilterState
@@ -147,9 +152,18 @@ export function OrderFilters({
   sizeOptions?: SizeOption[]
   /** Có = hiện nút lọc "Trùng khách" kèm số khách đặt từ 2 đơn trở lên. */
   dupCustomerCount?: number
+  /** Có = hiện bộ lọc "Lô xuất". */
+  batches?: BatchSummary[]
   searchPlaceholder?: string
 }) {
-  const advancedCount = [filters.status, filters.from, filters.to, filters.group, filters.size, filters.dup].filter(Boolean).length
+  // Ô tìm kiếm không gắn cứng vào URL: URL cập nhật trễ một nhịp nên React ghi đè ô và đẩy con trỏ về cuối.
+  // Chỉ đồng bộ lại khi người dùng không đang gõ (bấm "Xóa bộ lọc", quay lại trang…).
+  const searchRef = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    const el = searchRef.current
+    if (el && el !== document.activeElement && el.value !== filters.q) el.value = filters.q
+  }, [filters.q])
+  const advancedCount = [filters.status, filters.from, filters.to, filters.group, filters.size, filters.dup, filters.batch].filter(Boolean).length
   const [open, setOpen] = useState(advancedCount > 0)
 
   return (
@@ -158,8 +172,9 @@ export function OrderFilters({
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
+            ref={searchRef}
             type="search"
-            value={filters.q}
+            defaultValue={filters.q}
             onChange={(e) => setFilter('q', e.target.value)}
             placeholder={searchPlaceholder}
             className="pl-9"
@@ -207,6 +222,25 @@ export function OrderFilters({
               options={[
                 { value: '', label: 'Tất cả size' },
                 ...sizeOptions.map((o) => ({ value: o.size, label: o.size, description: `${o.count} đơn` })),
+              ]}
+            />
+          </div>
+        )}
+        {batches && (
+          <div className="col-span-2 grid gap-1 md:col-span-1">
+            <Label className="text-xs text-muted-foreground">Lô xuất</Label>
+            <Dropdown
+              aria-label="Lọc theo lô xuất"
+              value={filters.batch}
+              onChange={(v: string) => setFilter('batch', v)}
+              options={[
+                { value: '', label: 'Tất cả đơn' },
+                { value: 'none', label: 'Chưa vào lô' },
+                ...batches.map((b) => ({
+                  value: b.id,
+                  label: <span className="font-mono">{b.code}</span>,
+                  description: [b.note, `${b.order_count} đơn`, b.status === 'done' ? BATCH_STATUS_LABELS.done : ''].filter(Boolean).join(' · '),
+                })),
               ]}
             />
           </div>

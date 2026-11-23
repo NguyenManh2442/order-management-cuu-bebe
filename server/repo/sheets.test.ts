@@ -25,9 +25,11 @@ function fakeApi(sheets: Record<string, unknown[][]>) {
   return { api, writes }
 }
 
-/** Sheet "Orders" như trên production TRƯỚC khi chạy init-sheets: chưa có paid_amount, public_token. */
+/** Sheet "Orders" như trên production TRƯỚC khi chạy init-sheets: chưa có paid_amount, public_token, delivered_at. */
 function oldOrdersSheet() {
-  const header = Object.keys(SHEET_DEFS.orders.columns).filter((c) => !SHEET_DEFS.orders.optional?.includes(c))
+  const header = Object.keys(SHEET_DEFS.orders.columns).filter(
+    (c) => !SHEET_DEFS.orders.optional?.includes(c) && !SHEET_DEFS.orders.softOptional?.includes(c),
+  )
   header.push('ghi_chu_rieng') // cột người dùng tự thêm
   const row = header.map((c) =>
     c === 'id' ? 'o1' : c === 'total_amount' ? 200000 : c === 'status' ? 'pending' : c === 'ghi_chu_rieng' ? 'giữ nguyên' : '',
@@ -70,6 +72,28 @@ describe('SheetsStore với sheet chưa có cột mới', () => {
     await expect(store.update('orders', { ...order, paid_amount: 50000 })).rejects.toMatchObject({ status: 503 })
     await expect(store.updateMany('orders', [{ ...order, public_token: 'x' }])).rejects.toMatchObject({ status: 503 })
     expect(writes).toHaveLength(0)
+  })
+
+  it('chưa có cột delivered_at: đổi đơn sang "Đã giao" vẫn ghi được (bỏ qua cột phụ)', async () => {
+    const { sheets, header } = oldOrdersSheet()
+    const { api, writes } = fakeApi(sheets)
+    const store = new SheetsStore(api as never, 'id', 0)
+    const [order] = (await store.snapshot(true)).orders
+    expect(order.delivered_at).toBe('')
+    await store.update('orders', { ...order, status: 'delivered', delivered_at: '2026-12-01T03:00:00.000Z' })
+    expect(writes).toHaveLength(1)
+    expect(writes[0].values[0][header.indexOf('status')]).toBe('delivered')
+  })
+
+  it('chưa có sheet Expenses: chi phí ngoài coi như rỗng, ghi thì báo chạy init-sheets', async () => {
+    const { sheets } = oldOrdersSheet()
+    const store = new SheetsStore(fakeApi(sheets).api as never, 'id', 0)
+    expect((await store.snapshot()).expenses).toEqual([])
+    await expect(
+      store.insert('expenses', [
+        { id: 'x1', date: '2026-11-01', category: 'ads', name: 'QC', amount: 1000, note: '', created_at: '', updated_at: '' },
+      ]),
+    ).rejects.toThrow(/init-sheets/)
   })
 
   it('thiếu cột bắt buộc vẫn báo lỗi như trước', async () => {

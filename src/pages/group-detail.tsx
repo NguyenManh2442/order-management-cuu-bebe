@@ -16,7 +16,7 @@ import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { errorMessage } from '@/lib/api'
 import { slugify } from '@/lib/csv'
-import { useConfig, useGroup, useSaveGroup } from '@/lib/queries'
+import { useBatches, useConfig, useGroup, useSaveGroup } from '@/lib/queries'
 import { dateKey, formatNumber, formatVND } from '@/lib/utils'
 
 export function GroupDetailPage() {
@@ -24,6 +24,7 @@ export function GroupDetailPage() {
   const { data, isPending, error, refetch } = useGroup(id)
   const { data: config } = useConfig()
   const { filters, setFilter, clear, filtered, sizeOptions, dupCustomerCount } = useOrderFilters(data?.orders)
+  const { data: batches } = useBatches()
   const selection = useOrderSelection(filtered)
   const [includeCancelled, setIncludeCancelled] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(false)
@@ -162,6 +163,7 @@ export function GroupDetailPage() {
           clear={clear}
           sizeOptions={sizeOptions}
           dupCustomerCount={dupCustomerCount}
+        batches={batches}
           searchPlaceholder="Tìm khách, SĐT, mã đơn…"
         />
         {isOpen && (

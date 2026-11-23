@@ -11,6 +11,7 @@ import {
   type GhnQuote,
 } from '../../shared/ghn'
 import type { GhnDraft, GhnShipmentInput } from '../../shared/schemas'
+import { withDeliveredAt } from '../../shared/finance'
 import { amountDue } from '../../shared/stats'
 import type { Order, OrderItem } from '../../shared/types'
 import { AppError, conflict, notFound } from '../errors'
@@ -85,7 +86,8 @@ export function applyGhnStatus(
     next.ghn_cod_amount !== order.ghn_cod_amount ||
     next.ghn_expected_delivery !== order.ghn_expected_delivery
   if (!changed) return null
-  return { ...next, updated_at: now }
+  // Mốc tính doanh thu: thời điểm GHN báo giao (đồng hồ GHN), không có thì lúc app nhận tin.
+  return withDeliveredAt(order, { ...next, updated_at: now }, at || now)
 }
 
 /**
@@ -526,7 +528,27 @@ export class ShippingService {
   async printUrl(orderId: string): Promise<string> {
     const { order } = this.findOrder(await this.store.snapshot(), orderId)
     if (!isActiveShipment(order)) throw new AppError(400, 'Đơn không có vận đơn GHN đang hiệu lực.')
-    return this.ghn.printUrl([order.ghn_order_code])
+    const url = await this.ghn.printUrl([order.ghn_order_code])
+    await this.markPrinted([order.ghn_order_code])
+    return url
+  }
+
+  /**
+   * Ghi "đã in" cho mọi đơn có các mã vận đơn này (cả đơn gửi chung). App chỉ biết đã mở trang in,
+   * nên in hỏng thì người dùng bỏ đánh dấu để in lại. Lỗi ghi không làm hỏng việc in.
+   */
+  private async markPrinted(codes: string[]) {
+    try {
+      await this.writeLock.run(async () => {
+        const snap = await this.store.snapshot(true)
+        const now = this.clock().toISOString()
+        const set = new Set(codes)
+        const changed = snap.orders.filter((o) => set.has(o.ghn_order_code) && isActiveShipment(o)).map((o) => ({ ...o, printed_at: now }))
+        if (changed.length) await this.store.updateMany('orders', changed)
+      })
+    } catch (err) {
+      console.error('[ghn] Không ghi được dấu đã in:', (err as Error)?.message)
+    }
   }
 
   /** In gộp nhãn nhiều đơn trong một trang. Đơn chưa có vận đơn hiệu lực thì bỏ qua. */
@@ -543,6 +565,8 @@ export class ShippingService {
       } else skipped.push(o?.order_code ?? id)
     }
     if (!codes.length) throw new AppError(400, 'Các đơn đã chọn chưa có vận đơn GHN để in.')
-    return { url: await this.ghn.printUrl(codes), count: codes.length, skipped }
+    const url = await this.ghn.printUrl(codes)
+    await this.markPrinted(codes)
+    return { url, count: codes.length, skipped }
   }
 }

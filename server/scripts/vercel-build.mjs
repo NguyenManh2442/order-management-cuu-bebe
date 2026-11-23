@@ -18,6 +18,22 @@ run('npx tsc -b')
 run('npx vite build')
 cpSync('dist', `${out}/static`, { recursive: true })
 
+/**
+ * Tự bổ sung sheet / cột mới vào Google Sheets mỗi lần deploy (thay cho chạy tay "npm run init-sheets"),
+ * dùng env sẵn có trên Vercel. An toàn khi chạy lại: chỉ tạo sheet và thêm cột còn thiếu, không sửa/xóa dữ liệu.
+ * Chỉ chạy trên máy build của Vercel và khi dùng Sheets; đặt SKIP_INIT_SHEETS=1 để tắt.
+ * Lỗi (Google chậm, sai quyền…) không chặn deploy: app vẫn chạy với cột cũ, chỉ báo khi dùng tính năng cần cột mới.
+ */
+if (process.env.VERCEL && process.env.DATA_SOURCE?.trim() === 'sheets' && process.env.SKIP_INIT_SHEETS !== '1') {
+  try {
+    run('npx tsx server/scripts/init-sheets.ts')
+  } catch {
+    console.warn('⚠ Không cập nhật được cấu trúc Google Sheets — deploy vẫn tiếp tục. Xem lỗi ở trên.')
+  }
+} else {
+  console.log('Bỏ qua init-sheets (không phải build trên Vercel với DATA_SOURCE=sheets, hoặc SKIP_INIT_SHEETS=1).')
+}
+
 const fn = `${out}/functions/api.func`
 mkdirSync(fn, { recursive: true })
 await build({

@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { COST_BASES, COST_CATEGORIES, GROUP_STATUSES, MAX_ITEMS_PER_ORDER, ORDER_STATUSES } from './constants'
+import { BATCH_STATUSES, COST_BASES, COST_CATEGORIES, EXPENSE_CATEGORIES, GROUP_STATUSES, MAX_ITEMS_PER_ORDER, ORDER_STATUSES } from './constants'
 import { GHN_REQUIRED_NOTES, MAX_BUNDLE_ORDERS } from './ghn'
 import { isValidPhone, isValidUrl } from './phone'
 
@@ -73,6 +73,42 @@ export const groupCostInputSchema = z.object({
   basis: z.enum(COST_BASES),
   note: z.string().trim().max(500, 'Tối đa 500 ký tự'),
   expected_updated_at: z.string().optional(),
+})
+
+export const expenseInputSchema = z.object({
+  date: z
+    .string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Chọn ngày chi')
+    .refine((d) => !Number.isNaN(Date.parse(`${d}T00:00:00Z`)), 'Ngày không hợp lệ'),
+  category: z.enum(EXPENSE_CATEGORIES),
+  name: z.string().trim().min(1, 'Nhập tên khoản chi').max(120, 'Tối đa 120 ký tự'),
+  amount: money.min(1, 'Nhập số tiền'),
+  note: z.string().trim().max(500, 'Tối đa 500 ký tự'),
+  expected_updated_at: z.string().optional(),
+})
+
+const orderIds = z.array(z.string().min(1).max(100)).max(500, 'Tối đa 500 đơn mỗi lần')
+
+export const batchCreateInputSchema = z.object({
+  note: z.string().trim().max(200, 'Tối đa 200 ký tự'),
+  /** Đơn đưa vào lô ngay khi tạo (đơn đang ở lô khác được chuyển sang). */
+  order_ids: orderIds,
+})
+
+export const batchUpdateInputSchema = z.object({
+  note: z.string().trim().max(200, 'Tối đa 200 ký tự'),
+  status: z.enum(BATCH_STATUSES),
+  expected_updated_at: z.string().optional(),
+})
+
+export const batchOrdersInputSchema = z.object({
+  action: z.enum(['add', 'remove']),
+  order_ids: orderIds.min(1, 'Chưa chọn đơn nào'),
+})
+
+export const printedInputSchema = z.object({
+  order_ids: orderIds.min(1, 'Chưa chọn đơn nào'),
+  printed: z.boolean(),
 })
 
 export const bulkOrderStatusInputSchema = z.object({
@@ -228,6 +264,10 @@ export type OrderStatusInput = z.infer<typeof orderStatusInputSchema>
 export type BulkOrderStatusInput = z.infer<typeof bulkOrderStatusInputSchema>
 export type GroupInput = z.infer<typeof groupInputSchema>
 export type GroupCostInput = z.infer<typeof groupCostInputSchema>
+export type ExpenseInput = z.infer<typeof expenseInputSchema>
+export type BatchCreateInput = z.infer<typeof batchCreateInputSchema>
+export type BatchUpdateInput = z.infer<typeof batchUpdateInputSchema>
+export type BatchOrdersInput = z.infer<typeof batchOrdersInputSchema>
 export type LoginInput = z.infer<typeof loginInputSchema>
 export type GhnShipmentInput = z.infer<typeof ghnShipmentInputSchema>
 export type GhnDraft = z.infer<typeof ghnDraftSchema>

@@ -1,4 +1,4 @@
-import type { CostBasis, CostCategory, GroupStatus, OrderStatus } from './constants'
+import type { BatchStatus, CostBasis, CostCategory, ExpenseCategory, GroupStatus, OrderStatus } from './constants'
 import type { GhnPublicConfig } from './ghn'
 
 /** Mọi mốc thời gian là chuỗi ISO 8601 (UTC). Mọi số tiền là số nguyên VND. */
@@ -56,6 +56,12 @@ export interface Order {
   paid_amount: number
   /** Mã bí mật của link tra cứu đơn cho khách, '' nếu chưa tạo link. */
   public_token: string
+  /** Thời điểm đơn chuyển sang "Đã giao" — mốc tính doanh thu theo tháng. '' = chưa giao / dữ liệu cũ. */
+  delivered_at: string
+  /** Lô xuất chứa đơn này ('' = chưa vào lô). Mỗi đơn chỉ thuộc một lô. */
+  batch_id: string
+  /** Lần in nhãn GHN gần nhất ('' = chưa in, hoặc đã bỏ đánh dấu để in lại). */
+  printed_at: string
   created_at: string
   updated_at: string
 }
@@ -88,6 +94,8 @@ export interface OrderView extends Order {
   customer_history: CustomerHistory
   /** Mã các đơn khác gửi chung vận đơn GHN đang hiệu lực với đơn này ([] = gửi riêng). */
   ghn_bundle: string[]
+  /** Mã lô xuất ('' = chưa vào lô / lô đã bị xóa). */
+  batch_code: string
 }
 
 /** Khách tìm theo SĐT, kèm lịch sử để cảnh báo ngay trên form tạo đơn. */
@@ -144,6 +152,45 @@ export interface GroupStats {
 
 export interface GroupWithStats extends OrderGroup {
   stats: GroupStats
+}
+
+/** Lô xuất: gom các đơn của một đợt xuất để tạo vận đơn, in nhãn, đổi trạng thái cùng lúc. */
+export interface Batch {
+  id: string
+  /** LX261123-01 */
+  code: string
+  note: string
+  status: BatchStatus
+  created_at: string
+  updated_at: string
+}
+
+export interface BatchSummary extends Batch {
+  order_count: number
+  /** Đơn có vận đơn GHN đang hiệu lực. */
+  shipped_count: number
+  /** Đơn có vận đơn và đã in nhãn. */
+  printed_count: number
+  /** Tổng sản phẩm (không tính đơn đã hủy). */
+  item_count: number
+}
+
+export interface BatchDetail {
+  batch: Batch
+  orders: OrderView[]
+}
+
+/** Chi phí ngoài (chi phí chung của shop theo ngày, không thuộc nhóm hàng). */
+export interface Expense {
+  id: string
+  /** Ngày chi, YYYY-MM-DD. */
+  date: string
+  category: ExpenseCategory
+  name: string
+  amount: number
+  note: string
+  created_at: string
+  updated_at: string
 }
 
 /** Một dòng chi phí của nhóm (vải, phụ liệu, công may…). Thành tiền không lưu, luôn tính lại. */

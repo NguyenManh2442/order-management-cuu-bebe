@@ -4,6 +4,20 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { cn, formatNumber } from '@/lib/utils'
 
+const moneyText = (n: number) => (Number.isFinite(n) && n > 0 ? formatNumber(n) : '')
+
+/**
+ * Đặt lại nội dung ô (đã định dạng) mà giữ con trỏ sau đúng số chữ số như trước —
+ * gán value thẳng thì trình duyệt đẩy con trỏ về cuối mỗi lần thêm / bớt dấu chấm.
+ */
+function setKeepingCaret(el: HTMLInputElement, text: string) {
+  const before = el.value.slice(0, el.selectionStart ?? el.value.length).replace(/\D/g, '').length
+  el.value = text
+  let pos = 0
+  for (let seen = 0; pos < text.length && seen < before; pos++) if (/\d/.test(text[pos])) seen++
+  el.setSelectionRange(pos, pos)
+}
+
 /** Ô nhập tiền hiển thị "350.000", lưu số nguyên. Bàn phím số trên điện thoại. */
 export function MoneyInput({
   value,
@@ -16,11 +30,14 @@ export function MoneyInput({
       <Input
         inputMode="numeric"
         autoComplete="off"
-        value={Number.isFinite(value) && value > 0 ? formatNumber(value) : ''}
+        value={moneyText(value)}
         placeholder="0"
         onChange={(e) => {
           const digits = e.target.value.replace(/\D/g, '').slice(0, 10)
-          onChange(digits ? Number(digits) : 0)
+          const next = digits ? Number(digits) : 0
+          // Định dạng ngay trong ô: React thấy giá trị trùng nên không ghi đè (con trỏ giữ nguyên chỗ).
+          setKeepingCaret(e.target, moneyText(next))
+          onChange(next)
         }}
         className={cn('pr-8 text-right tabular-nums', className)}
         {...props}

@@ -48,3 +48,25 @@ export const COST_BASIS_LABELS: Record<CostBasis, string> = {
   fixed: 'Số lượng cố định',
   per_item: 'Theo mỗi sản phẩm',
 }
+
+/** Lô xuất: một đợt soạn / tạo vận đơn / in nhãn / giao cho GHN. */
+export const BATCH_STATUSES = ['open', 'done'] as const
+export type BatchStatus = (typeof BATCH_STATUSES)[number]
+
+export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = {
+  open: 'Đang xuất',
+  done: 'Đã xong',
+}
+
+/** Chi phí ngoài: chi phí chung của shop, không thuộc nhóm hàng nào. */
+export const EXPENSE_CATEGORIES = ['ads', 'shipping', 'packaging', 'salary', 'tools', 'other'] as const
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number]
+
+export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
+  ads: 'Quảng cáo',
+  shipping: 'Vận chuyển',
+  packaging: 'Bao bì, đóng gói',
+  salary: 'Lương, nhân công',
+  tools: 'Dụng cụ, thiết bị',
+  other: 'Khác',
+}

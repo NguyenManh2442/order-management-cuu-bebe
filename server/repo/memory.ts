@@ -4,8 +4,8 @@ import type { DataStore, RowOf, Snapshot, TableName } from './types'
 export class MemoryStore implements DataStore {
   private data: Snapshot
 
-  constructor(seed?: Snapshot) {
-    this.data = structuredClone({ customers: [], groups: [], orders: [], items: [], costs: [], ...seed })
+  constructor(seed?: Partial<Snapshot>) {
+    this.data = structuredClone({ customers: [], groups: [], orders: [], items: [], costs: [], expenses: [], batches: [], ...seed })
   }
 
   async snapshot(): Promise<Snapshot> {

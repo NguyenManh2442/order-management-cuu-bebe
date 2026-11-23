@@ -494,7 +494,14 @@ function SizePicker({
         <Input
           autoFocus={editing && !isCustom}
           value={isCustom ? value : ''}
-          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          onChange={(e) => {
+            // Viết hoa ngay trong ô và giữ vị trí con trỏ (đổi value thẳng thì con trỏ nhảy về cuối).
+            const el = e.target
+            const { selectionStart, selectionEnd } = el
+            el.value = el.value.toUpperCase()
+            el.setSelectionRange(selectionStart, selectionEnd)
+            onChange(el.value)
+          }}
           placeholder="Size khác"
           className="h-11 w-28 uppercase"
           maxLength={20}

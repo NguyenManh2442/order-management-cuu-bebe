@@ -34,7 +34,8 @@ export function Field({
   children: React.ReactNode
 }) {
   return (
-    <div className={cn('grid min-w-0 gap-1.5', className)}>
+    // content-start: đặt cạnh ô có dòng gợi ý (cao hơn) thì nhãn và ô nhập không bị giãn lệch xuống.
+    <div className={cn('grid min-w-0 content-start gap-1.5', className)}>
       <Label htmlFor={htmlFor}>
         {label}
         {required && <span className="text-destructive"> *</span>}

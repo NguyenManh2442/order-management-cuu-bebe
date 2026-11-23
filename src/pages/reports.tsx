@@ -1,4 +1,4 @@
-import { ClipboardList, HandCoins, LogOut, Shirt, Wallet } from 'lucide-react'
+import { ChevronRight, ClipboardList, HandCoins, LogOut, Shirt, Wallet } from 'lucide-react'
 import { useMemo } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { ORDER_STATUSES, ORDER_STATUS_LABELS, type OrderStatus } from '@shared/constants'
@@ -58,6 +58,21 @@ export function ReportsPage() {
   return (
     <>
       <PageHeader title="Báo cáo" subtitle={scopeLabel} />
+      <Link
+        to="/finance"
+        className="mb-4 flex items-center justify-between gap-3 rounded-xl border bg-card p-4 shadow-xs transition-colors hover:bg-secondary/40 md:hidden"
+      >
+        <span className="flex items-center gap-3">
+          <span className="flex size-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+            <Wallet className="size-5" />
+          </span>
+          <span>
+            <span className="block font-semibold">Thu chi theo tháng, năm</span>
+            <span className="block text-sm text-muted-foreground">Doanh thu thực tế, chi phí ngoài</span>
+          </span>
+        </span>
+        <ChevronRight className="size-5 text-muted-foreground" />
+      </Link>
       {groups.data && groups.data.length > 0 && (
         <div className="mb-4 grid max-w-md gap-1">
           <Label className="text-xs text-muted-foreground">Nhóm đơn</Label>
